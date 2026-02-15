@@ -1,0 +1,21 @@
+
+{
+  "short_name": "FinSense",
+  "name": "FinSense AI Finance Tracker",
+  "icons": [
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/583/583985.png",
+      "type": "image/png",
+      "sizes": "192x192"
+    },
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/583/583985.png",
+      "type": "image/png",
+      "sizes": "512x512"
+    }
+  ],
+  "start_url": ".",
+  "display": "standalone",
+  "theme_color": "#2563eb",
+  "background_color": "#f8fafc"
+}
