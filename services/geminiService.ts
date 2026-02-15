@@ -2,13 +2,13 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { Transaction, BehavioralInsight, BudgetGoal } from "../types";
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-
 export const getBehavioralInsights = async (
   transactions: Transaction[],
   goals: BudgetGoal[],
   lang: 'en' | 'ar' = 'en'
 ): Promise<BehavioralInsight[]> => {
+  // Initialize AI instance inside the function call to ensure process.env.API_KEY is available
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   const model = 'gemini-3-flash-preview';
   
   const prompt = `
