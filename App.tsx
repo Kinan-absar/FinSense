@@ -317,8 +317,15 @@ const App: React.FC = () => {
             </p>
           </div>
           <div className="flex gap-3">
+             {/* Language toggle for mobile only */}
+             <button 
+               onClick={() => setLang(lang === 'en' ? 'ar' : 'en')}
+               className="lg:hidden flex items-center justify-center p-3 bg-white border border-gray-100 rounded-2xl shadow-sm text-blue-600 font-black text-xs min-w-[3.5rem] active:scale-95 transition-transform"
+             >
+               {lang === 'en' ? 'AR' : 'EN'}
+             </button>
              <button onClick={() => setShowForm(true)} className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-2xl font-bold shadow-xl shadow-blue-100 active:scale-95 transition-all text-sm">
-                <Plus className="w-5 h-5" /> <span>{t.entry}</span>
+                <Plus className="w-5 h-5" /> <span className="hidden sm:inline">{t.entry}</span>
              </button>
           </div>
         </header>
