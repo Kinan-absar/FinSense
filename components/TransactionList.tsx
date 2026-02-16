@@ -2,7 +2,7 @@
 import React from 'react';
 import { Transaction } from '../types';
 import { CATEGORY_ICONS } from '../constants';
-import { Smile, Frown, Meh, Zap, Moon, Clock } from 'lucide-react';
+import { Smile, Frown, Meh, Zap, Moon, Clock, Trash2 } from 'lucide-react';
 import { Language, translations } from '../translations';
 
 interface Props {
@@ -27,61 +27,68 @@ const TransactionList: React.FC<Props> = ({ transactions, onDelete, lang }) => {
 
   if (transactions.length === 0) {
     return (
-      <div className="text-center py-12 bg-white rounded-2xl border border-dashed border-gray-300">
-        <p className="text-gray-400">{tStrings.no_transactions}</p>
+      <div className="text-center py-12 bg-white rounded-[2.5rem] border border-dashed border-gray-200">
+        <p className="text-gray-400 font-bold italic">{tStrings.no_transactions}</p>
       </div>
     );
   }
 
   return (
-    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-      <div className="overflow-x-auto">
-        <table className="w-full text-start">
+    <div className="bg-white rounded-[2.5rem] shadow-sm border border-gray-100 overflow-hidden animate-in fade-in slide-in-from-bottom-4 duration-500">
+      <div className="overflow-x-auto custom-scrollbar">
+        <table className="w-full text-start border-collapse">
           <thead className="bg-gray-50 border-b border-gray-100">
             <tr>
-              <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase text-start">{tStrings.description}</th>
-              <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase text-start">{tStrings.category}</th>
-              <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase text-start">{tStrings.date}</th>
-              <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase text-start">{tStrings.emotional_context}</th>
-              <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase text-end">{tStrings.amount}</th>
+              <th className="px-8 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest text-start">{tStrings.description}</th>
+              <th className="px-8 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest text-start">{tStrings.category}</th>
+              <th className="px-8 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest text-start">{tStrings.date}</th>
+              <th className="hidden lg:table-cell px-8 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest text-start">{tStrings.emotional_context}</th>
+              <th className="px-8 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest text-end">{tStrings.amount}</th>
+              <th className="px-8 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center"></th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-gray-100">
+          <tbody className="divide-y divide-gray-50">
             {transactions.map((t) => (
-              <tr key={t.id} className="hover:bg-gray-50 transition-colors group">
-                <td className="px-6 py-4">
-                  <span className="text-sm font-medium text-gray-800">{t.description || (lang === 'ar' ? 'بدون وصف' : 'No description')}</span>
+              <tr key={t.id} className="hover:bg-blue-50/30 transition-colors group">
+                <td className="px-8 py-5">
+                  <span className="text-sm font-bold text-gray-800 line-clamp-1">{t.description || (lang === 'ar' ? 'بدون وصف' : 'No description')}</span>
                 </td>
-                <td className="px-6 py-4">
+                <td className="px-8 py-5">
                   <div className="flex items-center gap-2">
-                    <div className="p-1.5 bg-blue-50 text-blue-600 rounded-lg shrink-0">
+                    <div className="p-2 bg-blue-50 text-blue-600 rounded-xl shrink-0">
                       {CATEGORY_ICONS[t.category]}
                     </div>
-                    <span className="text-xs text-gray-600">{(tStrings.categories as any)[t.category]}</span>
+                    <span className="text-[10px] font-black uppercase text-gray-500 tracking-wider">{(tStrings.categories as any)[t.category]}</span>
                   </div>
                 </td>
-                <td className="px-6 py-4">
-                  <div className="flex items-center gap-1.5 text-xs text-gray-500">
-                    <Clock className="w-3.5 h-3.5" />
-                    <span>{t.date} {t.time}</span>
+                <td className="px-8 py-5">
+                  <div className="flex items-center gap-2 text-xs font-bold text-gray-400">
+                    <Clock className="w-3.5 h-3.5 text-blue-500" />
+                    <span className="whitespace-nowrap">{t.date}</span>
                   </div>
                 </td>
-                <td className="px-6 py-4">
-                  <div className="flex items-center gap-1.5">
+                <td className="hidden lg:table-cell px-8 py-5">
+                  <div className="flex items-center gap-2 px-3 py-1.5 bg-gray-50 rounded-full w-fit">
                     <MoodIcon mood={t.mood} />
-                    <span className="text-xs text-gray-600">{(tStrings.moods as any)[t.mood]}</span>
+                    <span className="text-[10px] font-black uppercase text-gray-500">{(tStrings.moods as any)[t.mood]}</span>
                   </div>
                 </td>
-                <td className="px-6 py-4 text-end">
-                  <div className="flex items-center justify-end gap-4">
-                    <span className="text-sm font-bold text-gray-900">{t.amount.toFixed(2)}</span>
-                    <button 
-                      onClick={() => onDelete(t.id)}
-                      className="opacity-0 group-hover:opacity-100 text-red-500 hover:text-red-700 transition-all text-xs font-bold"
-                    >
-                      {tStrings.delete}
-                    </button>
-                  </div>
+                <td className="px-8 py-5 text-end">
+                  <span className="text-sm font-black text-gray-900">{t.amount.toFixed(2)}</span>
+                </td>
+                <td className="px-8 py-5 text-center">
+                  <button 
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onDelete(t.id);
+                    }}
+                    className="p-3 text-gray-300 hover:text-rose-500 hover:bg-rose-50 rounded-xl transition-all active:scale-90"
+                    title={tStrings.delete}
+                    aria-label={tStrings.delete}
+                  >
+                    <Trash2 className="w-5 h-5" />
+                  </button>
                 </td>
               </tr>
             ))}

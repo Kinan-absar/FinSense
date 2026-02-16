@@ -1,13 +1,12 @@
-
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { CATEGORIES, MOODS } from '../constants';
 import { Transaction, Category, Mood, Account } from '../types';
-import { PlusCircle, X, CreditCard } from 'lucide-react';
+import { PlusCircle, X, ArrowDownRight } from 'lucide-react';
 import { Language, translations } from '../translations';
 
 interface Props {
   accounts: Account[];
-  onAdd: (t: Transaction) => void;
+  onAdd: (t: Omit<Transaction, 'userId'> & { isSettlement?: boolean, targetAccountId?: string }) => void;
   onClose: () => void;
   lang: Language;
 }
@@ -19,23 +18,36 @@ const TransactionForm: React.FC<Props> = ({ accounts, onAdd, onClose, lang }) =>
   const [description, setDescription] = useState('');
   const [mood, setMood] = useState<Mood>('Neutral');
   const [accountId, setAccountId] = useState(accounts[0]?.id || '');
+  const [targetAccountId, setTargetAccountId] = useState('');
+  const [isSettlement, setIsSettlement] = useState(false);
   const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
   const [time, setTime] = useState(new Date().toTimeString().slice(0, 5));
+
+  const creditCardAccounts = useMemo(() => accounts.filter(a => a.type === 'Credit Card'), [accounts]);
+  const fundingAccounts = useMemo(() => accounts.filter(a => a.type !== 'Credit Card'), [accounts]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!amount || isNaN(Number(amount))) return;
+    if (isSettlement && !targetAccountId) return;
 
-    onAdd({
+    const transactionData: any = {
       id: Math.random().toString(36).substr(2, 9),
       amount: Number(amount),
-      category,
-      description,
+      category: isSettlement ? 'Settlement' : category,
+      description: isSettlement ? `${t.is_settlement}: ${description}` : description,
       mood,
       date,
       time,
-      accountId
-    });
+      accountId,
+    };
+
+    if (isSettlement) {
+      transactionData.isSettlement = true;
+      transactionData.targetAccountId = targetAccountId;
+    }
+
+    onAdd(transactionData);
     onClose();
   };
 
@@ -49,7 +61,30 @@ const TransactionForm: React.FC<Props> = ({ accounts, onAdd, onClose, lang }) =>
           </button>
         </div>
         
-        <form onSubmit={handleSubmit} className="p-6 space-y-4 max-h-[80vh] overflow-y-auto">
+        <form onSubmit={handleSubmit} className="p-6 space-y-4 max-h-[80vh] overflow-y-auto custom-scrollbar">
+          <div className="flex items-center justify-between p-4 bg-blue-50/50 rounded-2xl border border-blue-100 mb-2">
+            <div className="flex items-center gap-3">
+               <ArrowDownRight className="w-5 h-5 text-blue-600" />
+               <span className="text-sm font-bold text-blue-900">{t.is_settlement}</span>
+            </div>
+            <button 
+              type="button"
+              onClick={() => {
+                const nextState = !isSettlement;
+                setIsSettlement(nextState);
+                if (nextState) {
+                  const firstFund = fundingAccounts[0]?.id;
+                  if (firstFund) setAccountId(firstFund);
+                  const firstCC = creditCardAccounts[0]?.id;
+                  if (firstCC) setTargetAccountId(firstCC);
+                }
+              }}
+              className={`w-12 h-6 rounded-full transition-all relative ${isSettlement ? 'bg-blue-600' : 'bg-gray-200'}`}
+            >
+              <div className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-all ${lang === 'ar' ? (isSettlement ? 'right-7' : 'right-1') : (isSettlement ? 'left-7' : 'left-1')}`} />
+            </button>
+          </div>
+
           <div>
             <label className="block text-xs font-bold text-gray-400 uppercase tracking-widest mb-2">{t.amount}</label>
             <input
@@ -65,97 +100,53 @@ const TransactionForm: React.FC<Props> = ({ accounts, onAdd, onClose, lang }) =>
 
           <div>
             <label className="block text-xs font-bold text-gray-400 uppercase tracking-widest mb-2">{t.source_account}</label>
-            <div className="grid grid-cols-1 gap-2">
-              {accounts.map(acc => (
-                <button
-                  key={acc.id}
-                  type="button"
-                  onClick={() => setAccountId(acc.id)}
-                  className={`flex items-center justify-between p-3 rounded-xl border transition-all ${
-                    accountId === acc.id 
-                      ? 'border-blue-600 bg-blue-50 text-blue-700 font-semibold ring-1 ring-blue-600' 
-                      : 'border-gray-100 bg-white text-gray-600 hover:border-gray-200'
-                  }`}
-                >
-                  <div className="flex items-center gap-2">
-                    <CreditCard className="w-4 h-4" />
-                    <span className="text-sm">{acc.name}</span>
-                  </div>
-                  <span className="text-xs opacity-60">{(t.account_types as any)[acc.type]}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-bold text-gray-400 uppercase tracking-widest mb-2">{t.date}</label>
-              <input
-                type="date"
-                value={date}
-                onChange={(e) => setDate(e.target.value)}
-                className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl text-sm outline-none"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-bold text-gray-400 uppercase tracking-widest mb-2">{t.time}</label>
-              <input
-                type="time"
-                value={time}
-                onChange={(e) => setTime(e.target.value)}
-                className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl text-sm outline-none"
-              />
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-xs font-bold text-gray-400 uppercase tracking-widest mb-2">{t.category}</label>
             <select
-              value={category}
-              onChange={(e) => setCategory(e.target.value as Category)}
-              className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl text-sm outline-none"
+              value={accountId}
+              onChange={(e) => setAccountId(e.target.value)}
+              className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl text-sm outline-none font-bold text-gray-700"
             >
-              {CATEGORIES.map(c => <option key={c} value={c}>{(t.categories as any)[c]}</option>)}
+              {(isSettlement ? fundingAccounts : accounts).map(acc => (
+                <option key={acc.id} value={acc.id}>{acc.name} ({acc.balance.toLocaleString()})</option>
+              ))}
             </select>
           </div>
 
-          <div>
-            <label className="block text-xs font-bold text-gray-400 uppercase tracking-widest mb-2">{t.emotional_context}</label>
-            <div className="flex flex-wrap gap-2">
-              {MOODS.map(m => (
-                <button
-                  key={m}
-                  type="button"
-                  onClick={() => setMood(m)}
-                  className={`px-4 py-2 rounded-xl text-xs font-medium transition-all ${
-                    mood === m 
-                      ? 'bg-blue-600 text-white shadow-lg shadow-blue-200' 
-                      : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
-                  }`}
-                >
-                  {(t.moods as any)[m]}
-                </button>
-              ))}
+          {isSettlement && (
+            <div className="animate-in slide-in-from-top-2">
+              <label className="block text-xs font-bold text-gray-400 uppercase tracking-widest mb-2">{t.target_credit_card}</label>
+              <select
+                required
+                value={targetAccountId}
+                onChange={(e) => setTargetAccountId(e.target.value)}
+                className="w-full px-4 py-3 bg-emerald-50 border border-emerald-100 rounded-xl text-sm outline-none font-bold text-emerald-700"
+              >
+                <option value="" disabled>Select Credit Card</option>
+                {creditCardAccounts.map(acc => <option key={acc.id} value={acc.id}>{acc.name} (Available: {acc.balance.toLocaleString()})</option>)}
+              </select>
             </div>
+          )}
+
+          <div className="grid grid-cols-2 gap-4">
+            <input type="date" value={date} onChange={e => setDate(e.target.value)} className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl font-bold" />
+            <input type="time" value={time} onChange={e => setTime(e.target.value)} className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl font-bold" />
           </div>
 
-          <div>
-            <label className="block text-xs font-bold text-gray-400 uppercase tracking-widest mb-2">{t.description}</label>
-            <input
-              type="text"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl text-sm outline-none"
-              placeholder={lang === 'ar' ? 'ماذا كان هذا من أجله؟' : 'What was this for?'}
-            />
+          {!isSettlement && (
+            <select value={category} onChange={e => setCategory(e.target.value as Category)} className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl font-bold">
+              {CATEGORIES.filter(c => c !== 'Settlement').map(c => <option key={c} value={c}>{(t.categories as any)[c]}</option>)}
+            </select>
+          )}
+
+          <div className="flex flex-wrap gap-2">
+            {MOODS.map(m => (
+              <button key={m} type="button" onClick={() => setMood(m)} className={`px-4 py-2 rounded-xl text-xs font-bold ${mood === m ? 'bg-blue-600 text-white shadow-lg' : 'bg-gray-100 text-gray-500'}`}>{(t.moods as any)[m]}</button>
+            ))}
           </div>
 
-          <button
-            type="submit"
-            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 rounded-2xl shadow-xl shadow-blue-100 transition-all flex items-center justify-center gap-2 mt-6 active:scale-[0.98]"
-          >
-            <PlusCircle className="w-5 h-5" />
-            {t.complete_transaction}
+          <input type="text" value={description} onChange={e => setDescription(e.target.value)} className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl font-bold" placeholder={t.description} />
+
+          <button type="submit" className="w-full bg-blue-600 text-white font-black py-4 rounded-2xl shadow-xl uppercase tracking-widest text-xs">
+            <PlusCircle className="w-5 h-5 mx-auto" />
           </button>
         </form>
       </div>
