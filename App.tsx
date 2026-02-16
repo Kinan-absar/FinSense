@@ -26,12 +26,12 @@ const App: React.FC = () => {
   const [currentTime, setCurrentTime] = useState(new Date());
   
   const [showForm, setShowForm] = useState(false);
+  const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
   const [editingBudget, setEditingBudget] = useState<BudgetGoal | null>(null);
   const [editingAccount, setEditingAccount] = useState<Account | null>(null);
   const [showBudgetForm, setShowBudgetForm] = useState(false);
   const [showAccountForm, setShowAccountForm] = useState(false);
 
-  // Custom Confirm Modal State
   const [confirmDelete, setConfirmDelete] = useState<{
     id: string;
     type: 'transaction' | 'budget' | 'account';
@@ -153,7 +153,7 @@ const App: React.FC = () => {
     return transactions
       .filter(tr => {
         const d = new Date(tr.date);
-        return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear() && !(tr as any).isSettlement;
+        return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear() && !tr.isSettlement;
       })
       .reduce((acc, curr) => acc + curr.amount, 0);
   }, [transactions]);
@@ -172,7 +172,6 @@ const App: React.FC = () => {
     if (tData.isSettlement && tData.targetAccountId) {
       const sourceAcc = accounts.find(a => a.id === tData.accountId);
       const targetAcc = accounts.find(a => a.id === tData.targetAccountId);
-      
       if (sourceAcc && targetAcc) {
         await dataService.updateAccountBalance(user.uid, sourceAcc.id, sourceAcc.balance - tData.amount);
         await dataService.updateAccountBalance(user.uid, targetAcc.id, targetAcc.balance + tData.amount);
@@ -183,8 +182,50 @@ const App: React.FC = () => {
          await dataService.updateAccountBalance(user.uid, sourceAcc.id, sourceAcc.balance - tData.amount);
       }
     }
-    
     await dataService.addTransaction(user.uid, tData);
+  };
+
+  const handleUpdateTransaction = async (id: string, newData: any) => {
+    if (!user) return;
+    const oldT = transactions.find(t => t.id === id);
+    if (!oldT) return;
+
+    // 1. Reverse old impact
+    if (oldT.isSettlement && oldT.targetAccountId) {
+      const oldSource = accounts.find(a => a.id === oldT.accountId);
+      const oldTarget = accounts.find(a => a.id === oldT.targetAccountId);
+      if (oldSource) await dataService.updateAccountBalance(user.uid, oldSource.id, oldSource.balance + oldT.amount);
+      if (oldTarget) await dataService.updateAccountBalance(user.uid, oldTarget.id, oldTarget.balance - oldT.amount);
+    } else {
+      const oldSource = accounts.find(a => a.id === oldT.accountId);
+      if (oldSource) await dataService.updateAccountBalance(user.uid, oldSource.id, oldSource.balance + oldT.amount);
+    }
+
+    // 2. Refresh local understanding of accounts for applying new impact
+    // (In a real high-perf app, you'd wait for Firestore or optimistic UI)
+    // For now, we apply it immediately based on the state we know.
+    
+    if (newData.isSettlement && newData.targetAccountId) {
+      const newSource = accounts.find(a => a.id === newData.accountId);
+      const newTarget = accounts.find(a => a.id === newData.targetAccountId);
+      
+      if (newSource) {
+        const baseBalance = newSource.balance + (oldT.accountId === newData.accountId ? oldT.amount : 0);
+        await dataService.updateAccountBalance(user.uid, newSource.id, baseBalance - newData.amount);
+      }
+      if (newTarget) {
+        const baseBalance = newTarget.balance - (oldT.targetAccountId === newData.targetAccountId ? oldT.amount : 0);
+        await dataService.updateAccountBalance(user.uid, newTarget.id, baseBalance + newData.amount);
+      }
+    } else {
+      const newSource = accounts.find(a => a.id === newData.accountId);
+      if (newSource) {
+         const baseBalance = newSource.balance + (oldT.accountId === newData.accountId ? oldT.amount : 0);
+         await dataService.updateAccountBalance(user.uid, newSource.id, baseBalance - newData.amount);
+      }
+    }
+
+    await dataService.updateTransaction(user.uid, id, newData);
   };
 
   const handleConfirmDelete = async () => {
@@ -192,7 +233,20 @@ const App: React.FC = () => {
 
     try {
       if (confirmDelete.type === 'transaction') {
-        await dataService.deleteTransaction(user.uid, confirmDelete.id);
+        const t = transactions.find(x => x.id === confirmDelete.id);
+        if (t) {
+          // REVERSE BALANCE BEFORE DELETE
+          if (t.isSettlement && t.targetAccountId) {
+            const s = accounts.find(a => a.id === t.accountId);
+            const tr = accounts.find(a => a.id === t.targetAccountId);
+            if (s) await dataService.updateAccountBalance(user.uid, s.id, s.balance + t.amount);
+            if (tr) await dataService.updateAccountBalance(user.uid, tr.id, tr.balance - t.amount);
+          } else {
+            const s = accounts.find(a => a.id === t.accountId);
+            if (s) await dataService.updateAccountBalance(user.uid, s.id, s.balance + t.amount);
+          }
+          await dataService.deleteTransaction(user.uid, confirmDelete.id);
+        }
       } else if (confirmDelete.type === 'budget') {
         await dataService.deleteGoal(user.uid, confirmDelete.id);
       } else if (confirmDelete.type === 'account') {
@@ -286,28 +340,10 @@ const App: React.FC = () => {
            </button>
 
            <div className="p-4 bg-blue-50/50 rounded-2xl border border-blue-100">
-             <div className="flex items-center gap-2 mb-3 text-blue-600">
-                <Languages className="w-3.5 h-3.5" />
-                <span className="text-[10px] font-bold uppercase tracking-wider">{t.language}</span>
-             </div>
              <div className="flex gap-1 bg-white p-1 rounded-xl shadow-sm">
                 <button onClick={() => updateLanguage('en')} className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${lang === 'en' ? 'bg-blue-600 text-white' : 'text-gray-400'}`}>EN</button>
                 <button onClick={() => updateLanguage('ar')} className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${lang === 'ar' ? 'bg-blue-600 text-white' : 'text-gray-400'}`}>AR</button>
              </div>
-           </div>
-
-           <div className="p-4 bg-gray-50 rounded-2xl border border-gray-100">
-             <div className="flex items-center gap-2 mb-3 text-gray-500">
-                <Globe className="w-3.5 h-3.5" />
-                <span className="text-[10px] font-bold uppercase tracking-wider">{t.currency}</span>
-             </div>
-             <select 
-               value={currency.code} 
-               onChange={(e) => updateCurrencyByCode(e.target.value)}
-               className="bg-white border border-gray-100 text-xs font-bold text-gray-700 outline-none w-full p-2.5 rounded-xl shadow-sm cursor-pointer"
-             >
-               {CURRENCIES.map(c => <option key={c.code} value={c.code}>{c.label} ({c.symbol})</option>)}
-             </select>
            </div>
         </div>
       </nav>
@@ -316,18 +352,11 @@ const App: React.FC = () => {
         <header className="flex justify-between items-center lg:items-start mb-6 lg:mb-10">
           <div>
             <h1 className="text-xl lg:text-3xl font-black text-gray-900 tracking-tight flex items-center gap-2">
-              {activeView === 'dashboard' 
-                ? (
-                    <>
-                      <span className="lg:inline hidden">{t.welcome_back}, {userName}</span>
-                      <span className="lg:hidden inline">{lang === 'ar' ? 'أهلاً' : 'Hi'}, {userName}</span>
-                    </>
-                  )
-                : (t as any)[activeView] || t.overview}
+              {(t as any)[activeView] || t.overview}
             </h1>
           </div>
           <div className="flex items-center gap-2 lg:gap-3">
-             <button onClick={() => setShowForm(true)} className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 lg:px-6 py-2.5 lg:py-3.5 rounded-xl lg:rounded-2xl font-black shadow-lg lg:shadow-xl shadow-blue-100 active:scale-95 transition-all text-[10px] lg:text-sm">
+             <button onClick={() => { setEditingTransaction(null); setShowForm(true); }} className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 lg:px-6 py-2.5 lg:py-3.5 rounded-xl lg:rounded-2xl font-black shadow-lg lg:shadow-xl shadow-blue-100 active:scale-95 transition-all text-[10px] lg:text-sm">
                <Plus className="w-3.5 h-3.5 lg:w-5 lg:h-5" /> <span className="uppercase tracking-widest">{t.entry}</span>
              </button>
           </div>
@@ -336,51 +365,24 @@ const App: React.FC = () => {
         {activeView === 'dashboard' && (
           <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 lg:gap-6 mb-8 lg:mb-10">
-              <StatCard 
-                title={t.total_assets} 
-                value={formatMoney(totalAssets)} 
-                trend={t.trend_liquid} 
-                trendType="up" 
-                icon={<TrendingUp className="w-4 h-4 lg:w-5 lg:h-5" />} 
-                lang={lang} 
-                onClick={() => setActiveView('accounts')}
-              />
-              <StatCard 
-                title={t.total_expenses} 
-                value={formatMoney(totalExpenses)} 
-                trend={t.trend_monthly} 
-                trendType="down" 
-                icon={<TrendingDown className="w-4 h-4 lg:w-5 lg:h-5 text-amber-500" />} 
-                lang={lang} 
-                onClick={() => setActiveView('history')}
-              />
-              <StatCard 
-                title={t.total_debt} 
-                value={formatMoney(totalDebt)} 
-                trend={t.trend_debt} 
-                trendType="down" 
-                icon={<ShieldAlert className="w-4 h-4 lg:w-5 lg:h-5 text-rose-500" />} 
-                lang={lang} 
-                isDebt 
-                onClick={() => setActiveView('accounts')}
-              />
-              <StatCard 
-                title={t.budget_health} 
-                value={`${goals.length}`} 
-                trend={t.trend_goals} 
-                trendType="up" 
-                icon={<Target className="w-4 h-4 lg:w-5 lg:h-5" />} 
-                lang={lang} 
-                onClick={() => setActiveView('budgets')}
-              />
+              <StatCard title={t.total_assets} value={formatMoney(totalAssets)} trend={t.trend_liquid} trendType="up" icon={<TrendingUp className="w-4 h-4 lg:w-5 lg:h-5" />} lang={lang} onClick={() => setActiveView('accounts')} />
+              <StatCard title={t.total_expenses} value={formatMoney(totalExpenses)} trend={t.trend_monthly} trendType="down" icon={<TrendingDown className="w-4 h-4 lg:w-5 lg:h-5 text-amber-500" />} lang={lang} onClick={() => setActiveView('history')} />
+              <StatCard title={t.total_debt} value={formatMoney(totalDebt)} trend={t.trend_debt} trendType="down" icon={<ShieldAlert className="w-4 h-4 lg:w-5 lg:h-5 text-rose-500" />} lang={lang} isDebt onClick={() => setActiveView('accounts')} />
+              <StatCard title={t.budget_health} value={`${goals.length}`} trend={t.trend_goals} trendType="up" icon={<Target className="w-4 h-4 lg:w-5 lg:h-5" />} lang={lang} onClick={() => setActiveView('budgets')} />
             </div>
-
-            <div className="space-y-6 lg:space-y-8">
-              <Charts transactions={transactions} lang={lang} />
-            </div>
+            <Charts transactions={transactions} lang={lang} />
           </div>
         )}
-        {activeView === 'history' && <TransactionList transactions={transactions} onDelete={handleDeleteTransaction} lang={lang} />}
+
+        {activeView === 'history' && (
+          <TransactionList 
+            transactions={transactions} 
+            onDelete={handleDeleteTransaction} 
+            onEdit={(t) => { setEditingTransaction(t); setShowForm(true); }}
+            lang={lang} 
+          />
+        )}
+
         {activeView === 'budgets' && (
           <BudgetsView 
             user={user} 
@@ -393,6 +395,7 @@ const App: React.FC = () => {
             onDelete={handleDeleteGoal}
           />
         )}
+
         {activeView === 'accounts' && (
           <AccountsView 
             user={user} 
@@ -404,17 +407,8 @@ const App: React.FC = () => {
             onDelete={handleDeleteAccount}
           />
         )}
-        {activeView === 'profile' && (
-          <ProfileView 
-            profile={userProfile} 
-            lang={lang} 
-            updateLanguage={updateLanguage}
-            currency={currency}
-            updateCurrencyByCode={updateCurrencyByCode}
-            transactionsCount={transactions.length} 
-            accountsCount={accounts.length} 
-          />
-        )}
+
+        {activeView === 'profile' && <ProfileView profile={userProfile} lang={lang} updateLanguage={updateLanguage} currency={currency} updateCurrencyByCode={updateCurrencyByCode} transactionsCount={transactions.length} accountsCount={accounts.length} />}
         {activeView === 'statement' && <StatementView accounts={accounts} transactions={transactions} currency={currency} lang={lang} onDelete={handleDeleteTransaction} />}
       </main>
 
@@ -423,17 +417,27 @@ const App: React.FC = () => {
         <MobileNavLink icon={<LayoutDashboard className="w-5 h-5" />} active={activeView === 'dashboard'} onClick={() => setActiveView('dashboard')} />
         <MobileNavLink icon={<History className="w-5 h-5" />} active={activeView === 'history'} onClick={() => setActiveView('history')} />
         <MobileNavLink icon={<Target className="w-5 h-5" />} active={activeView === 'budgets'} onClick={() => setActiveView('budgets')} />
-        <button onClick={() => setShowForm(true)} className="w-12 h-12 bg-blue-600 text-white rounded-2xl shadow-2xl flex items-center justify-center -translate-y-8 active:scale-90 transition-transform"><Plus className="w-6 h-6" /></button>
+        <button onClick={() => { setEditingTransaction(null); setShowForm(true); }} className="w-12 h-12 bg-blue-600 text-white rounded-2xl shadow-2xl flex items-center justify-center -translate-y-8 active:scale-90 transition-transform"><Plus className="w-6 h-6" /></button>
         <MobileNavLink icon={<CreditCard className="w-5 h-5" />} active={activeView === 'accounts'} onClick={() => setActiveView('accounts')} />
         <MobileNavLink icon={<FileText className="w-5 h-5" />} active={activeView === 'statement'} onClick={() => setActiveView('statement')} />
         <MobileNavLink icon={<UserIcon className="w-5 h-5" />} active={activeView === 'profile'} onClick={() => setActiveView('profile')} />
       </nav>
 
-      {showForm && <TransactionForm accounts={accounts} onAdd={handleAddTransaction} onClose={() => setShowForm(false)} lang={lang} />}
+      {/* Forms & Modals */}
+      {showForm && (
+        <TransactionForm 
+          accounts={accounts} 
+          initialData={editingTransaction}
+          onAdd={handleAddTransaction} 
+          onUpdate={handleUpdateTransaction}
+          onClose={() => { setShowForm(false); setEditingTransaction(null); }} 
+          lang={lang} 
+        />
+      )}
+      
       {showBudgetForm && <BudgetForm initialData={editingBudget} onAdd={(b: any) => dataService.saveGoal(user!.uid, b)} onClose={() => { setShowBudgetForm(false); setEditingBudget(null); }} lang={lang} />}
       {showAccountForm && <AccountForm initialData={editingAccount} onAdd={(a: any) => dataService.saveAccount(user!.uid, a)} onClose={() => { setShowAccountForm(false); setEditingAccount(null); }} lang={lang} />}
 
-      {/* Confirmation Modal */}
       {confirmDelete && (
         <ConfirmModal 
           lang={lang}
@@ -446,15 +450,7 @@ const App: React.FC = () => {
   );
 };
 
-const ProfileView = ({ profile, lang, updateLanguage, currency, updateCurrencyByCode, transactionsCount, accountsCount }: { 
-  profile: UserProfile | null, 
-  lang: Language, 
-  updateLanguage: (l: Language) => void,
-  currency: Currency,
-  updateCurrencyByCode: (c: string) => void,
-  transactionsCount: number, 
-  accountsCount: number 
-}) => {
+const ProfileView = ({ profile, lang, updateLanguage, currency, updateCurrencyByCode, transactionsCount, accountsCount }: any) => {
   const t = translations[lang];
   const [name, setName] = useState(profile?.name || '');
   const [photoURL, setPhotoURL] = useState(profile?.photoURL || '');
@@ -553,14 +549,7 @@ const ProfileView = ({ profile, lang, updateLanguage, currency, updateCurrencyBy
             <div className="absolute -bottom-1 -right-1 bg-blue-600 text-white p-2 rounded-xl shadow-lg border-2 border-white transition-transform group-hover:scale-110 pointer-events-none">
               <Camera className="w-4 h-4" />
             </div>
-            <input 
-              type="file" 
-              ref={fileInputRef} 
-              className="hidden" 
-              accept="image/*" 
-              onChange={handleFileChange}
-              onClick={(e) => (e.target as HTMLInputElement).value = ''}
-            />
+            <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={handleFileChange} />
           </div>
           <div>
             <h2 className="text-xl lg:text-2xl font-black text-gray-900">{profile?.name || 'User'}</h2>
@@ -571,18 +560,9 @@ const ProfileView = ({ profile, lang, updateLanguage, currency, updateCurrencyBy
         <div className="space-y-6">
           <div>
             <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-2">{t.full_name}</label>
-            <input 
-              type="text" 
-              value={name} 
-              onChange={(e) => setName(e.target.value)}
-              className="w-full bg-gray-50 border border-gray-100 p-4 rounded-2xl outline-none font-bold text-gray-800 focus:bg-white focus:border-blue-100 transition-colors text-sm"
-            />
+            <input type="text" value={name} onChange={(e) => setName(e.target.value)} className="w-full bg-gray-50 border border-gray-100 p-4 rounded-2xl outline-none font-bold text-gray-800 focus:bg-white focus:border-blue-100 transition-colors text-sm" />
           </div>
-          <button 
-            onClick={handleUpdate}
-            disabled={loading || (name === profile?.name && photoURL === profile?.photoURL)}
-            className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white p-4 lg:p-5 rounded-2xl font-black shadow-xl shadow-blue-100 transition-all active:scale-95 uppercase tracking-widest text-[10px] lg:text-xs"
-          >
+          <button onClick={handleUpdate} disabled={loading || (name === profile?.name && photoURL === profile?.photoURL)} className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white p-4 lg:p-5 rounded-2xl font-black shadow-xl shadow-blue-100 transition-all active:scale-95 uppercase tracking-widest text-[10px] lg:text-xs">
             {loading ? <Loader2 className="w-5 h-5 animate-spin mx-auto" /> : t.update_profile}
           </button>
         </div>
@@ -622,7 +602,7 @@ const ProfileView = ({ profile, lang, updateLanguage, currency, updateCurrencyBy
   );
 };
 
-const StatementView = ({ accounts, transactions, currency, lang, onDelete }: { accounts: Account[], transactions: Transaction[], currency: Currency, lang: Language, onDelete: (id: string) => void }) => {
+const StatementView = ({ accounts, transactions, currency, lang, onDelete }: any) => {
   const t = translations[lang];
   const [selectedAccountId, setSelectedAccountId] = useState(accounts[0]?.id || '');
   const [period, setPeriod] = useState<'current' | 'last' | 'custom'>('current');

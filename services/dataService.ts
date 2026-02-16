@@ -81,6 +81,12 @@ export const dataService = {
     return addDoc(collection(db, "users", userId, "transactions"), cleanObject({ ...cleanTransaction, userId, createdAt: serverTimestamp() }));
   },
 
+  updateTransaction: async (userId: string, transactionId: string, transaction: Partial<Transaction>) => {
+    if (!userId || !transactionId) return;
+    const docRef = doc(db, "users", userId, "transactions", transactionId);
+    return updateDoc(docRef, cleanObject({ ...transaction, updatedAt: serverTimestamp() }));
+  },
+
   deleteTransaction: async (userId: string, transactionId: string) => {
     if (!userId || !transactionId) return;
     try {
@@ -96,7 +102,6 @@ export const dataService = {
   saveGoal: async (userId: string, goal: Omit<BudgetGoal, 'id' | 'userId'> & { id?: string }) => {
     if (!userId) return;
     const { id, ...data } = goal;
-    // Normalized to 'budgets' to match user's screenshot
     const docRef = (id && id.length > 15) ? doc(db, "users", userId, "budgets", id) : doc(collection(db, "users", userId, "budgets"));
     return setDoc(docRef, { ...cleanObject(data), userId, createdAt: serverTimestamp() }, { merge: true });
   },

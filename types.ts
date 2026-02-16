@@ -46,6 +46,7 @@ export interface Account {
   createdAt?: any;
 }
 
+// Fixed: Added isSettlement and targetAccountId properties to Transaction interface
 export interface Transaction {
   id: string;
   userId: string;
@@ -56,6 +57,8 @@ export interface Transaction {
   description: string;
   mood: Mood;
   accountId: string;
+  isSettlement?: boolean;
+  targetAccountId?: string | null;
   createdAt?: any;
 }
 

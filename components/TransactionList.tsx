@@ -1,13 +1,13 @@
-
 import React from 'react';
 import { Transaction } from '../types';
 import { CATEGORY_ICONS } from '../constants';
-import { Smile, Frown, Meh, Zap, Moon, Clock, Trash2 } from 'lucide-react';
+import { Smile, Frown, Meh, Zap, Moon, Clock, Trash2, Edit2 } from 'lucide-react';
 import { Language, translations } from '../translations';
 
 interface Props {
   transactions: Transaction[];
   onDelete: (id: string) => void;
+  onEdit?: (transaction: Transaction) => void;
   lang: Language;
 }
 
@@ -22,7 +22,7 @@ const MoodIcon = ({ mood }: { mood: string }) => {
   }
 };
 
-const TransactionList: React.FC<Props> = ({ transactions, onDelete, lang }) => {
+const TransactionList: React.FC<Props> = ({ transactions, onDelete, onEdit, lang }) => {
   const tStrings = translations[lang];
 
   if (transactions.length === 0) {
@@ -77,18 +77,30 @@ const TransactionList: React.FC<Props> = ({ transactions, onDelete, lang }) => {
                   <span className="text-sm font-black text-gray-900">{t.amount.toFixed(2)}</span>
                 </td>
                 <td className="px-8 py-5 text-center">
-                  <button 
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onDelete(t.id);
-                    }}
-                    className="p-3 text-gray-300 hover:text-rose-500 hover:bg-rose-50 rounded-xl transition-all active:scale-90"
-                    title={tStrings.delete}
-                    aria-label={tStrings.delete}
-                  >
-                    <Trash2 className="w-5 h-5" />
-                  </button>
+                  <div className="flex items-center justify-center gap-1">
+                    {onEdit && (
+                      <button 
+                        type="button"
+                        onClick={() => onEdit(t)}
+                        className="p-3 text-gray-300 hover:text-blue-500 hover:bg-blue-50 rounded-xl transition-all active:scale-90"
+                        title={lang === 'ar' ? 'تعديل' : 'Edit'}
+                      >
+                        <Edit2 className="w-4 h-4" />
+                      </button>
+                    )}
+                    <button 
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onDelete(t.id);
+                      }}
+                      className="p-3 text-gray-300 hover:text-rose-500 hover:bg-rose-50 rounded-xl transition-all active:scale-90"
+                      title={tStrings.delete}
+                      aria-label={tStrings.delete}
+                    >
+                      <Trash2 className="w-5 h-5" />
+                    </button>
+                  </div>
                 </td>
               </tr>
             ))}
