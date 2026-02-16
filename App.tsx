@@ -71,14 +71,24 @@ const App: React.FC = () => {
     });
 
     const unsubG = dataService.subscribe(user.uid, 'budgets', (data: BudgetGoal[]) => {
-      setGoals(data);
+      if (data.length === 0) {
+        INITIAL_GOALS.forEach(g => dataService.saveGoal(user.uid, { ...g, userId: user.uid } as any));
+      } else {
+        setGoals(data);
+      }
     });
-
 
     const unsubA = dataService.subscribe(user.uid, 'accounts', (data: Account[]) => {
-      setAccounts(data);
+      if (data.length === 0) {
+        const defaults = [
+          { name: 'Cash Wallet', type: 'Cash' as AccountType, balance: 1000 },
+          { name: 'Primary Bank', type: 'Checking' as AccountType, balance: 5000 }
+        ];
+        defaults.forEach(acc => dataService.saveAccount(user.uid, { ...acc, userId: user.uid } as any));
+      } else {
+        setAccounts(data);
+      }
     });
-
 
     return () => {
       unsubProfile();
@@ -391,16 +401,7 @@ const App: React.FC = () => {
             accountsCount={accounts.length} 
           />
         )}
-        {activeView === 'statement' && 
-          <StatementView 
-            accounts={accounts} 
-            transactions={transactions} 
-            currency={currency} 
-            lang={lang}
-            onDelete={handleDeleteTransaction}
-          />
-        }
-
+        {activeView === 'statement' && <StatementView accounts={accounts} transactions={transactions} currency={currency} lang={lang} />}
       </main>
 
       {/* Mobile Nav */}
@@ -597,20 +598,7 @@ const ProfileView = ({ profile, lang, updateLanguage, currency, updateCurrencyBy
   );
 };
 
-const StatementView = ({ 
-  accounts, 
-  transactions, 
-  currency, 
-  lang,
-  onDelete
-}: { 
-  accounts: Account[], 
-  transactions: Transaction[], 
-  currency: Currency, 
-  lang: Language,
-  onDelete: (id: string) => void
-}) => {
-
+const StatementView = ({ accounts, transactions, currency, lang }: { accounts: Account[], transactions: Transaction[], currency: Currency, lang: Language }) => {
   const t = translations[lang];
   const [selectedAccountId, setSelectedAccountId] = useState(accounts[0]?.id || '');
   const [period, setPeriod] = useState<'current' | 'last' | 'custom'>('current');
@@ -690,11 +678,7 @@ const StatementView = ({
         </div>
       </div>
 
-      <TransactionList 
-  transactions={filteredTransactions} 
-  lang={lang} 
-  onDelete={onDelete} 
-/>
+      <TransactionList transactions={filteredTransactions} lang={lang} onDelete={() => {}} />
     </div>
   );
 };
