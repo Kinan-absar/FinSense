@@ -190,7 +190,6 @@ const App: React.FC = () => {
     const oldT = transactions.find(t => t.id === id);
     if (!oldT) return;
 
-    // 1. Reverse old impact
     if (oldT.isSettlement && oldT.targetAccountId) {
       const oldSource = accounts.find(a => a.id === oldT.accountId);
       const oldTarget = accounts.find(a => a.id === oldT.targetAccountId);
@@ -320,8 +319,8 @@ const App: React.FC = () => {
              </div>
            ) : (
               <div className="px-5 py-2 flex items-center gap-3">
-                <div className="w-10 h-10 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center text-sm font-black border border-blue-100">
-                   {userName.charAt(0).toUpperCase()}
+                <div className="w-10 h-10 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center text-sm font-black border border-blue-100 uppercase">
+                   {userName.charAt(0)}
                 </div>
                 <div>
                    <p className="text-xs font-black text-gray-900 truncate max-w-[120px]">{userName}</p>
@@ -347,10 +346,28 @@ const App: React.FC = () => {
         <header className="flex justify-between items-center lg:items-start mb-6 lg:mb-10">
           <div>
             <h1 className="text-xl lg:text-3xl font-black text-gray-900 tracking-tight flex items-center gap-2">
-              {(t as any)[activeView] || t.overview}
+              {activeView === 'dashboard' 
+                ? (
+                    <>
+                      <span className="lg:inline hidden">{t.welcome_back}, {userName}</span>
+                      <span className="lg:hidden inline">{lang === 'ar' ? 'أهلاً' : 'Hi'}, {userName}</span>
+                    </>
+                  )
+                : (t as any)[activeView] || t.overview}
             </h1>
           </div>
           <div className="flex items-center gap-2 lg:gap-3">
+             {activeView === 'dashboard' && (
+                <div className="lg:hidden flex-shrink-0">
+                   {userProfile?.photoURL ? (
+                     <img src={userProfile.photoURL} alt="Profile" className="w-9 h-9 rounded-xl object-cover border border-white shadow-sm" />
+                   ) : (
+                     <div className="w-9 h-9 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center text-xs font-black border border-blue-100 uppercase">
+                       {userName.charAt(0)}
+                     </div>
+                   )}
+                </div>
+             )}
              <button onClick={() => { setEditingTransaction(null); setShowForm(true); }} className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 lg:px-6 py-2.5 lg:py-3.5 rounded-xl lg:rounded-2xl font-black shadow-lg lg:shadow-xl shadow-blue-100 active:scale-95 transition-all text-[10px] lg:text-sm">
                <Plus className="w-3.5 h-3.5 lg:w-5 lg:h-5" /> <span className="uppercase tracking-widest">{t.entry}</span>
              </button>
@@ -380,7 +397,6 @@ const App: React.FC = () => {
 
         {activeView === 'budgets' && (
           <BudgetsView 
-            user={user} 
             goals={goals} 
             transactions={transactions} 
             formatMoney={formatMoney} 
@@ -393,7 +409,6 @@ const App: React.FC = () => {
 
         {activeView === 'accounts' && (
           <AccountsView 
-            user={user} 
             accounts={accounts} 
             formatMoney={formatMoney} 
             lang={lang} 
@@ -403,11 +418,10 @@ const App: React.FC = () => {
           />
         )}
 
-        {activeView === 'profile' && <ProfileView profile={userProfile} lang={lang} updateLanguage={updateLanguage} currency={currency} updateCurrencyByCode={updateCurrencyByCode} transactionsCount={transactions.length} accountsCount={accounts.length} />}
+        {activeView === 'profile' && <ProfileView profile={userProfile} lang={lang} updateLanguage={updateLanguage} currency={currency} updateCurrencyByCode={updateCurrencyByCode} />}
         {activeView === 'statement' && <StatementView profile={userProfile} accounts={accounts} transactions={transactions} currency={currency} lang={lang} onDelete={handleDeleteTransaction} />}
       </main>
 
-      {/* Mobile Nav */}
       <nav className="fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-md border-t border-gray-100 px-2 py-4 flex justify-around items-center lg:hidden z-40 shadow-[0_-10px_40px_rgba(0,0,0,0.03)] rounded-t-[2.5rem]">
         <MobileNavLink icon={<LayoutDashboard className="w-5 h-5" />} active={activeView === 'dashboard'} onClick={() => setActiveView('dashboard')} />
         <MobileNavLink icon={<History className="w-5 h-5" />} active={activeView === 'history'} onClick={() => setActiveView('history')} />
@@ -418,7 +432,6 @@ const App: React.FC = () => {
         <MobileNavLink icon={<UserIcon className="w-5 h-5" />} active={activeView === 'profile'} onClick={() => setActiveView('profile')} />
       </nav>
 
-      {/* Forms & Modals */}
       {showForm && (
         <TransactionForm 
           accounts={accounts} 
@@ -445,16 +458,21 @@ const App: React.FC = () => {
   );
 };
 
-const ProfileView = ({ profile, lang, updateLanguage, currency, updateCurrencyByCode, transactionsCount, accountsCount }: any) => {
+const ProfileView = ({ profile, lang, updateLanguage, currency, updateCurrencyByCode }: any) => {
   const t = translations[lang];
   const [name, setName] = useState(profile?.name || '');
   const [photoURL, setPhotoURL] = useState(profile?.photoURL || '');
   const [loading, setLoading] = useState(false);
   const [photoLoading, setPhotoLoading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const hasSyncedName = useRef(false);
 
+  // Sync profile name to local state once, then let user edit freely
   useEffect(() => {
-    if (profile?.name) setName(profile.name);
+    if (profile?.name && !hasSyncedName.current) {
+      setName(profile.name);
+      hasSyncedName.current = true;
+    }
     if (profile?.photoURL) setPhotoURL(profile.photoURL);
   }, [profile]);
 
@@ -512,8 +530,6 @@ const ProfileView = ({ profile, lang, updateLanguage, currency, updateCurrencyBy
         setPhotoURL(compressed);
         try {
           await dataService.updateUserProfile(profile.uid, { photoURL: compressed });
-        } catch (err) {
-          console.error("Auto-save photo failed:", err);
         } finally {
           setPhotoLoading(false);
         }
@@ -533,7 +549,6 @@ const ProfileView = ({ profile, lang, updateLanguage, currency, updateCurrencyBy
               {photoLoading ? (
                 <div className="flex flex-col items-center justify-center">
                   <Loader2 className="w-6 h-6 animate-spin mb-1" />
-                  <span className="text-[8px] font-black uppercase tracking-tighter text-blue-400">Saving</span>
                 </div>
               ) : photoURL ? (
                 <img src={photoURL} alt="Avatar" className="w-full h-full object-cover" />
@@ -541,7 +556,7 @@ const ProfileView = ({ profile, lang, updateLanguage, currency, updateCurrencyBy
                 initialChar
               )}
             </div>
-            <div className="absolute -bottom-1 -right-1 bg-blue-600 text-white p-2 rounded-xl shadow-lg border-2 border-white transition-transform group-hover:scale-110 pointer-events-none">
+            <div className="absolute -bottom-1 -right-1 bg-blue-600 text-white p-2 rounded-xl shadow-lg border-2 border-white pointer-events-none">
               <Camera className="w-4 h-4" />
             </div>
             <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={handleFileChange} />
@@ -637,7 +652,6 @@ const StatementView = ({ profile, accounts, transactions, currency, lang, onDele
 
   return (
     <div className="animate-in fade-in duration-500 space-y-6 lg:space-y-8">
-      {/* Print-only professional header */}
       <div className="hidden print:block mb-10 border-b-4 border-blue-600 pb-8">
         <div className="flex justify-between items-start mb-6">
           <div>
@@ -650,7 +664,6 @@ const StatementView = ({ profile, accounts, transactions, currency, lang, onDele
             <p className="text-xs text-gray-400 mt-2 italic">Generated on {new Date().toLocaleDateString(lang)}</p>
           </div>
         </div>
-        
         <div className="grid grid-cols-2 gap-8 mt-12">
           <div className="border-l-4 border-gray-100 pl-4">
             <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Account Name</p>
@@ -663,7 +676,6 @@ const StatementView = ({ profile, accounts, transactions, currency, lang, onDele
           </div>
         </div>
       </div>
-
       <div className="bg-white p-6 lg:p-8 rounded-3xl lg:rounded-[2.5rem] border border-gray-100 shadow-sm relative overflow-hidden print:border-none print:p-0">
         <div className="flex justify-between items-start mb-8 print:hidden">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 lg:gap-8 flex-1">
@@ -682,22 +694,8 @@ const StatementView = ({ profile, accounts, transactions, currency, lang, onDele
               </div>
             </div>
           </div>
-          <button onClick={() => window.print()} className="ms-4 p-4 bg-gray-50 hover:bg-white border border-gray-100 rounded-2xl text-gray-400 hover:text-blue-600 transition-all active:scale-95 group" title={lang === 'ar' ? 'طباعة' : 'Print Statement'}><Printer className="w-5 h-5" /></button>
+          <button onClick={() => window.print()} className="ms-4 p-4 bg-gray-50 hover:bg-white border border-gray-100 rounded-2xl text-gray-400 hover:text-blue-600 transition-all active:scale-95 group print:hidden"><Printer className="w-5 h-5" /></button>
         </div>
-
-        {period === 'custom' && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-8 p-6 bg-gray-50 rounded-3xl border border-blue-50 animate-in slide-in-from-top-2 print:hidden">
-            <div>
-              <label className="text-[10px] font-black text-gray-900 uppercase tracking-widest block mb-2">{t.date_from}</label>
-              <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="w-full bg-white border border-gray-200 p-4 rounded-xl outline-none text-sm font-bold text-gray-800 focus:ring-2 focus:ring-blue-500/20 transition-all" />
-            </div>
-            <div>
-              <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-2">{t.date_to}</label>
-              <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="w-full bg-white border border-gray-200 p-4 rounded-xl outline-none text-sm font-bold text-gray-800 focus:ring-2 focus:ring-blue-500/20 transition-all" />
-            </div>
-          </div>
-        )}
-
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 p-6 bg-blue-50/50 rounded-3xl border border-blue-100 print:bg-transparent print:border-none print:px-0 print:mb-8">
            <div className="print:border-l-2 print:border-gray-100 print:pl-4">
               <p className="text-[10px] font-black text-blue-500 uppercase tracking-widest mb-1 print:text-gray-400">{t.summary}</p>
@@ -709,14 +707,7 @@ const StatementView = ({ profile, accounts, transactions, currency, lang, onDele
            </div>
         </div>
       </div>
-
       <TransactionList transactions={filteredTransactions} lang={lang} onDelete={onDelete} />
-      
-      {/* Print-only footer */}
-      <div className="hidden print:block mt-20 text-center border-t border-gray-100 pt-8">
-        <p className="text-[10px] font-black text-gray-300 uppercase tracking-[0.3em]">End of Statement</p>
-        <p className="text-[8px] text-gray-300 mt-2 tracking-widest">FINSENSE AI FINANCE - SECURE PERSONAL TRACKING</p>
-      </div>
     </div>
   );
 };
@@ -727,50 +718,17 @@ const AccountsView = ({ accounts, formatMoney, lang, onAddClick, onEditClick, on
     <div className="space-y-6 lg:space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
       <div className="flex justify-between items-center"><h2 className="text-xl lg:text-2xl font-black text-gray-900">{tStr.accounts}</h2><button onClick={onAddClick} className="text-blue-600 font-black text-[10px] lg:text-sm uppercase tracking-widest">+{tStr.new_account}</button></div>
       <div className="grid grid-cols-2 md:grid-cols-2 lg:grid-cols-3 gap-3 lg:gap-8">
-        {accounts.map((acc: any) => {
-           const isDebtAccount = acc.type === 'Credit Card';
-           const limit = acc.creditLimit || 0;
-           const isSurplus = isDebtAccount && limit > 0 && acc.balance > limit;
-           const usedPercent = limit > 0 ? Math.min(100, (acc.balance / limit) * 100) : 0;
-           
-           return (
-            <div key={acc.id} className={`p-4 lg:p-10 rounded-2xl lg:rounded-[3rem] text-white shadow-2xl relative group overflow-hidden ${isDebtAccount ? (isSurplus ? 'bg-gradient-to-br from-emerald-600 via-emerald-500 to-emerald-700' : 'bg-gradient-to-br from-rose-600 via-rose-500 to-rose-700') : 'bg-gradient-to-br from-indigo-600 via-blue-600 to-blue-700'}`}>
-              <div className="absolute top-0 right-0 p-4 lg:p-12 opacity-10 pointer-events-none"><Wallet className="w-20 lg:w-40 h-20 lg:h-40" /></div>
-              <div className="absolute top-3 lg:top-8 right-3 lg:right-8 flex items-center gap-2 z-10">
-                <button onClick={() => onEditClick(acc)} className="p-1.5 text-white/40 hover:text-white transition-colors" title={lang === 'ar' ? 'تعديل' : 'Edit'}><Edit2 className="w-3 lg:w-5 h-3 lg:h-5" /></button>
-                <button onClick={() => onDelete(acc.id)} className="p-1.5 text-white/40 hover:text-rose-300 transition-colors" title={lang === 'ar' ? 'حذف' : 'Delete'}><Trash2 className="w-3 lg:w-5 h-3 lg:h-5" /></button>
-              </div>
-              <p className="text-[7px] lg:text-[10px] uppercase font-black tracking-[0.25em] opacity-70 mb-1 lg:mb-2">{(tStr.account_types as any)[acc.type]}</p>
-              <h3 className="text-xs lg:text-xl font-bold mb-3 lg:mb-8 relative z-10 line-clamp-1">{acc.name}</h3>
-              
-              <div className="relative z-10 mb-3 lg:mb-6">
-                <p className={`text-sm lg:text-4xl font-black ${isSurplus ? 'text-emerald-300' : 'text-white'}`}>
-                  {formatMoney(acc.balance)}
-                </p>
-                {isSurplus && (
-                  <div className="mt-2 inline-flex items-center gap-1.5 bg-white/20 px-2 py-1 rounded-lg border border-white/20">
-                    <TrendingUp className="w-3 h-3 text-white" />
-                    <span className="text-[8px] lg:text-[10px] font-black uppercase">
-                      {tStr.surplus}: {formatMoney(acc.balance - limit)}
-                    </span>
-                  </div>
-                )}
-              </div>
-              
-              {isDebtAccount && limit > 0 && (
-                <div className="space-y-2 lg:space-y-3 relative z-10">
-                   <div className="flex justify-between text-[7px] lg:text-[10px] font-black uppercase opacity-70">
-                      <span className="line-clamp-1">{tStr.available_funds}</span>
-                   </div>
-                   <div className="w-full h-1 lg:h-2 bg-white/20 rounded-full overflow-hidden">
-                      <div className={`h-full transition-all duration-1000 ${isSurplus ? 'bg-emerald-300' : 'bg-white'}`} style={{ width: `${isSurplus ? 100 : usedPercent}%` }} />
-                   </div>
-                   <p className="text-[6px] lg:text-[10px] font-black uppercase opacity-50 line-clamp-1">{tStr.credit_limit}: {formatMoney(limit)}</p>
-                </div>
-              )}
+        {accounts.map((acc: any) => (
+          <div key={acc.id} className={`p-4 lg:p-10 rounded-2xl lg:rounded-[3rem] text-white shadow-2xl relative group overflow-hidden ${acc.type === 'Credit Card' ? 'bg-gradient-to-br from-rose-600 via-rose-500 to-rose-700' : 'bg-gradient-to-br from-indigo-600 via-blue-600 to-blue-700'}`}>
+            <div className="absolute top-3 lg:top-8 right-3 lg:right-8 flex items-center gap-2 z-10">
+              <button onClick={() => onEditClick(acc)} className="p-1.5 text-white/40 hover:text-white transition-colors"><Edit2 className="w-3 lg:w-5 h-3 lg:h-5" /></button>
+              <button onClick={() => onDelete(acc.id)} className="p-1.5 text-white/40 hover:text-rose-300 transition-colors"><Trash2 className="w-3 lg:w-5 h-3 lg:h-5" /></button>
             </div>
-          );
-        })}
+            <p className="text-[7px] lg:text-[10px] uppercase font-black tracking-[0.25em] opacity-70 mb-1 lg:mb-2">{(tStr.account_types as any)[acc.type]}</p>
+            <h3 className="text-xs lg:text-xl font-bold mb-3 lg:mb-8 relative z-10 line-clamp-1">{acc.name}</h3>
+            <p className="text-sm lg:text-4xl font-black">{formatMoney(acc.balance)}</p>
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -799,8 +757,8 @@ const BudgetsView = ({ goals, transactions, formatMoney, lang, onAddClick, onEdi
               </div>
               <div className="w-full h-1.5 lg:h-3 bg-gray-50 rounded-full overflow-hidden mb-2 lg:mb-3"><div className={`h-full transition-all duration-1000 ${percent > 90 ? 'bg-rose-500' : 'bg-blue-600'}`} style={{width: `${percent}%`}} /></div>
               <div className="flex justify-between text-[7px] lg:text-[10px] font-black text-gray-400 uppercase tracking-widest">
-                <span className="line-clamp-1">{formatMoney(spent)}</span>
-                <span className={percent > 90 ? 'text-rose-500' : 'text-blue-600'}>{percent.toFixed(0)}%</span>
+                <span>{formatMoney(spent)}</span>
+                <span>{percent.toFixed(0)}%</span>
               </div>
             </div>
           );
@@ -836,7 +794,6 @@ const AccountForm = ({ onAdd, onClose, lang, initialData }: any) => {
   const [type, setType] = useState<AccountType>(initialData?.type || 'Checking');
   const [balance, setBalance] = useState(initialData?.balance?.toString() || '');
   const [creditLimit, setCreditLimit] = useState(initialData?.creditLimit?.toString() || '');
-
   return (
     <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[110] p-4 animate-in fade-in duration-200">
       <div className="bg-white rounded-[2.5rem] p-8 lg:p-10 w-full max-w-sm shadow-2xl animate-in zoom-in-95 duration-300">
