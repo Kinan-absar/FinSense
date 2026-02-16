@@ -201,10 +201,6 @@ const App: React.FC = () => {
       if (oldSource) await dataService.updateAccountBalance(user.uid, oldSource.id, oldSource.balance + oldT.amount);
     }
 
-    // 2. Refresh local understanding of accounts for applying new impact
-    // (In a real high-perf app, you'd wait for Firestore or optimistic UI)
-    // For now, we apply it immediately based on the state we know.
-    
     if (newData.isSettlement && newData.targetAccountId) {
       const newSource = accounts.find(a => a.id === newData.accountId);
       const newTarget = accounts.find(a => a.id === newData.targetAccountId);
@@ -235,7 +231,6 @@ const App: React.FC = () => {
       if (confirmDelete.type === 'transaction') {
         const t = transactions.find(x => x.id === confirmDelete.id);
         if (t) {
-          // REVERSE BALANCE BEFORE DELETE
           if (t.isSettlement && t.targetAccountId) {
             const s = accounts.find(a => a.id === t.accountId);
             const tr = accounts.find(a => a.id === t.targetAccountId);
@@ -409,7 +404,7 @@ const App: React.FC = () => {
         )}
 
         {activeView === 'profile' && <ProfileView profile={userProfile} lang={lang} updateLanguage={updateLanguage} currency={currency} updateCurrencyByCode={updateCurrencyByCode} transactionsCount={transactions.length} accountsCount={accounts.length} />}
-        {activeView === 'statement' && <StatementView accounts={accounts} transactions={transactions} currency={currency} lang={lang} onDelete={handleDeleteTransaction} />}
+        {activeView === 'statement' && <StatementView profile={userProfile} accounts={accounts} transactions={transactions} currency={currency} lang={lang} onDelete={handleDeleteTransaction} />}
       </main>
 
       {/* Mobile Nav */}
@@ -602,7 +597,7 @@ const ProfileView = ({ profile, lang, updateLanguage, currency, updateCurrencyBy
   );
 };
 
-const StatementView = ({ accounts, transactions, currency, lang, onDelete }: any) => {
+const StatementView = ({ profile, accounts, transactions, currency, lang, onDelete }: { profile: UserProfile | null, accounts: Account[], transactions: Transaction[], currency: Currency, lang: Language, onDelete: (id: string) => void }) => {
   const t = translations[lang];
   const [selectedAccountId, setSelectedAccountId] = useState(accounts[0]?.id || '');
   const [period, setPeriod] = useState<'current' | 'last' | 'custom'>('current');
@@ -634,10 +629,43 @@ const StatementView = ({ accounts, transactions, currency, lang, onDelete }: any
   const acc = accounts.find(a => a.id === selectedAccountId);
   const format = (val: number) => `${currency.symbol} ${val.toLocaleString(lang, { minimumFractionDigits: 2 })}`;
 
+  const periodLabel = useMemo(() => {
+    if (period === 'current') return t.current;
+    if (period === 'last') return t.last;
+    return `${dateFrom || '...'} ${lang === 'ar' ? 'إلى' : 'to'} ${dateTo || '...'}`;
+  }, [period, dateFrom, dateTo, lang, t]);
+
   return (
     <div className="animate-in fade-in duration-500 space-y-6 lg:space-y-8">
-      <div className="bg-white p-6 lg:p-8 rounded-3xl lg:rounded-[2.5rem] border border-gray-100 shadow-sm relative overflow-hidden">
-        <div className="flex justify-between items-start mb-8">
+      {/* Print-only professional header */}
+      <div className="hidden print:block mb-10 border-b-4 border-blue-600 pb-8">
+        <div className="flex justify-between items-start mb-6">
+          <div>
+            <h1 className="text-4xl font-black text-blue-600 tracking-tighter mb-2">FinSense</h1>
+            <p className="text-sm font-bold text-gray-500 uppercase tracking-widest">Account Statement</p>
+          </div>
+          <div className="text-right">
+            <p className="text-lg font-black text-gray-900">{profile?.name || 'User'}</p>
+            <p className="text-sm font-bold text-gray-500">{profile?.email}</p>
+            <p className="text-xs text-gray-400 mt-2 italic">Generated on {new Date().toLocaleDateString(lang)}</p>
+          </div>
+        </div>
+        
+        <div className="grid grid-cols-2 gap-8 mt-12">
+          <div className="border-l-4 border-gray-100 pl-4">
+            <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Account Name</p>
+            <p className="text-xl font-bold text-gray-800">{acc?.name || '---'}</p>
+            <p className="text-xs text-gray-500">{(t.account_types as any)[acc?.type || 'Checking']}</p>
+          </div>
+          <div className="border-l-4 border-blue-100 pl-4">
+            <p className="text-[10px] font-black text-blue-400 uppercase tracking-widest mb-1">Period</p>
+            <p className="text-xl font-bold text-blue-600 uppercase">{periodLabel}</p>
+          </div>
+        </div>
+      </div>
+
+      <div className="bg-white p-6 lg:p-8 rounded-3xl lg:rounded-[2.5rem] border border-gray-100 shadow-sm relative overflow-hidden print:border-none print:p-0">
+        <div className="flex justify-between items-start mb-8 print:hidden">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 lg:gap-8 flex-1">
             <div>
               <label className="text-[10px] font-black text-gray-900 uppercase tracking-widest block mb-3">{t.select_account}</label>
@@ -658,7 +686,7 @@ const StatementView = ({ accounts, transactions, currency, lang, onDelete }: any
         </div>
 
         {period === 'custom' && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-8 p-6 bg-gray-50 rounded-3xl border border-blue-50 animate-in slide-in-from-top-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-8 p-6 bg-gray-50 rounded-3xl border border-blue-50 animate-in slide-in-from-top-2 print:hidden">
             <div>
               <label className="text-[10px] font-black text-gray-900 uppercase tracking-widest block mb-2">{t.date_from}</label>
               <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="w-full bg-white border border-gray-200 p-4 rounded-xl outline-none text-sm font-bold text-gray-800 focus:ring-2 focus:ring-blue-500/20 transition-all" />
@@ -670,19 +698,25 @@ const StatementView = ({ accounts, transactions, currency, lang, onDelete }: any
           </div>
         )}
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 p-6 bg-blue-50/50 rounded-3xl border border-blue-100">
-           <div>
-              <p className="text-[10px] font-black text-blue-500 uppercase tracking-widest mb-1">{t.summary}</p>
-              <p className="text-sm font-bold text-blue-900">{acc?.name || '---'}</p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 p-6 bg-blue-50/50 rounded-3xl border border-blue-100 print:bg-transparent print:border-none print:px-0 print:mb-8">
+           <div className="print:border-l-2 print:border-gray-100 print:pl-4">
+              <p className="text-[10px] font-black text-blue-500 uppercase tracking-widest mb-1 print:text-gray-400">{t.summary}</p>
+              <p className="text-sm font-bold text-blue-900 print:text-gray-900">{acc?.name || '---'}</p>
            </div>
-           <div>
-              <p className="text-[10px] font-black text-blue-500 uppercase tracking-widest mb-1">{t.available_funds}</p>
-              <p className="text-base lg:text-lg font-black text-blue-600">{format(acc?.balance || 0)}</p>
+           <div className="print:border-l-2 print:border-blue-100 print:pl-4">
+              <p className="text-[10px] font-black text-blue-500 uppercase tracking-widest mb-1 print:text-blue-400">{t.available_funds}</p>
+              <p className="text-base lg:text-lg font-black text-blue-600 print:text-2xl print:text-blue-600">{format(acc?.balance || 0)}</p>
            </div>
         </div>
       </div>
 
       <TransactionList transactions={filteredTransactions} lang={lang} onDelete={onDelete} />
+      
+      {/* Print-only footer */}
+      <div className="hidden print:block mt-20 text-center border-t border-gray-100 pt-8">
+        <p className="text-[10px] font-black text-gray-300 uppercase tracking-[0.3em]">End of Statement</p>
+        <p className="text-[8px] text-gray-300 mt-2 tracking-widest">FINSENSE AI FINANCE - SECURE PERSONAL TRACKING</p>
+      </div>
     </div>
   );
 };

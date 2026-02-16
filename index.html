@@ -35,11 +35,17 @@
         }
         
         @media print {
+          @page {
+            margin: 1.5cm;
+          }
           nav, 
-          header button, 
-          button[onClick*="setShowForm"],
+          header,
           .lg\:hidden,
-          .fixed {
+          .fixed,
+          button,
+          select,
+          input[type="date"],
+          .print\:hidden {
             display: none !important;
           }
           main {
@@ -50,13 +56,30 @@
           }
           body {
             background: white !important;
+            color: black !important;
           }
           .bg-white {
             box-shadow: none !important;
+            border: none !important;
+          }
+          .bg-blue-50, .bg-gray-50, .bg-blue-50\/50 {
+            background-color: transparent !important;
             border: 1px solid #eee !important;
           }
-          .rounded-\[2\.5rem\], .rounded-3xl {
+          .rounded-\[2\.5rem\], .rounded-3xl, .rounded-2xl {
             border-radius: 0 !important;
+          }
+          * {
+            text-shadow: none !important;
+            box-shadow: none !important;
+          }
+          table {
+            width: 100% !important;
+            border-collapse: collapse !important;
+          }
+          th, td {
+            border-bottom: 1px solid #eee !important;
+            padding: 10px !important;
           }
         }
     </style>

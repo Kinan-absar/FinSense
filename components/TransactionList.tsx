@@ -42,9 +42,9 @@ const TransactionList: React.FC<Props> = ({ transactions, onDelete, onEdit, lang
               <th className="px-8 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest text-start">{tStrings.description}</th>
               <th className="px-8 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest text-start">{tStrings.category}</th>
               <th className="px-8 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest text-start">{tStrings.date}</th>
-              <th className="hidden lg:table-cell px-8 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest text-start">{tStrings.emotional_context}</th>
+              <th className="hidden lg:table-cell px-8 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest text-start print:hidden">{tStrings.emotional_context}</th>
               <th className="px-8 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest text-end">{tStrings.amount}</th>
-              <th className="px-8 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center"></th>
+              <th className="px-8 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center print:hidden"></th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-50">
@@ -55,7 +55,7 @@ const TransactionList: React.FC<Props> = ({ transactions, onDelete, onEdit, lang
                 </td>
                 <td className="px-8 py-5">
                   <div className="flex items-center gap-2">
-                    <div className="p-2 bg-blue-50 text-blue-600 rounded-xl shrink-0">
+                    <div className="p-2 bg-blue-50 text-blue-600 rounded-xl shrink-0 print:hidden">
                       {CATEGORY_ICONS[t.category]}
                     </div>
                     <span className="text-[10px] font-black uppercase text-gray-500 tracking-wider">{(tStrings.categories as any)[t.category]}</span>
@@ -63,20 +63,20 @@ const TransactionList: React.FC<Props> = ({ transactions, onDelete, onEdit, lang
                 </td>
                 <td className="px-8 py-5">
                   <div className="flex items-center gap-2 text-xs font-bold text-gray-400">
-                    <Clock className="w-3.5 h-3.5 text-blue-500" />
-                    <span className="whitespace-nowrap">{t.date}</span>
+                    <Clock className="w-3.5 h-3.5 text-blue-500 print:hidden" />
+                    <span className="whitespace-nowrap font-mono">{t.date}</span>
                   </div>
                 </td>
-                <td className="hidden lg:table-cell px-8 py-5">
+                <td className="hidden lg:table-cell px-8 py-5 print:hidden">
                   <div className="flex items-center gap-2 px-3 py-1.5 bg-gray-50 rounded-full w-fit">
                     <MoodIcon mood={t.mood} />
                     <span className="text-[10px] font-black uppercase text-gray-500">{(tStrings.moods as any)[t.mood]}</span>
                   </div>
                 </td>
                 <td className="px-8 py-5 text-end">
-                  <span className="text-sm font-black text-gray-900">{t.amount.toFixed(2)}</span>
+                  <span className="text-sm font-black text-gray-900 font-mono">{t.amount.toFixed(2)}</span>
                 </td>
-                <td className="px-8 py-5 text-center">
+                <td className="px-8 py-5 text-center print:hidden">
                   <div className="flex items-center justify-center gap-1">
                     {onEdit && (
                       <button 
