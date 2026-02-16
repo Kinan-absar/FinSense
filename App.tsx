@@ -8,6 +8,7 @@ import TransactionForm from './components/TransactionForm';
 import TransactionList from './components/TransactionList';
 import Charts from './components/Charts';
 import AuthScreen from './components/AuthScreen';
+import ConfirmModal from './components/ConfirmModal';
 import { Language, translations } from './translations';
 import { 
   Wallet, Plus, LayoutDashboard, History, Target, CreditCard, 
@@ -29,6 +30,13 @@ const App: React.FC = () => {
   const [editingAccount, setEditingAccount] = useState<Account | null>(null);
   const [showBudgetForm, setShowBudgetForm] = useState(false);
   const [showAccountForm, setShowAccountForm] = useState(false);
+
+  // Custom Confirm Modal State
+  const [confirmDelete, setConfirmDelete] = useState<{
+    id: string;
+    type: 'transaction' | 'budget' | 'account';
+    message: string;
+  } | null>(null);
 
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [goals, setGoals] = useState<BudgetGoal[]>([]);
@@ -135,7 +143,6 @@ const App: React.FC = () => {
       .filter(acc => acc.type === 'Credit Card')
       .reduce((acc, curr) => {
         const limit = curr.creditLimit || 0;
-        // Debt = limit - available balance. If balance > limit, debt is 0 (surplus).
         return acc + Math.max(0, limit - curr.balance);
       }, 0), 
     [accounts]
@@ -167,14 +174,12 @@ const App: React.FC = () => {
       const targetAcc = accounts.find(a => a.id === tData.targetAccountId);
       
       if (sourceAcc && targetAcc) {
-        // Source (Bank) goes down, CC Available Funds go up
         await dataService.updateAccountBalance(user.uid, sourceAcc.id, sourceAcc.balance - tData.amount);
         await dataService.updateAccountBalance(user.uid, targetAcc.id, targetAcc.balance + tData.amount);
       }
     } else {
       const sourceAcc = accounts.find(a => a.id === tData.accountId);
       if (sourceAcc) {
-         // All spending reduces the "Available" balance/funds
          await dataService.updateAccountBalance(user.uid, sourceAcc.id, sourceAcc.balance - tData.amount);
       }
     }
@@ -182,37 +187,46 @@ const App: React.FC = () => {
     await dataService.addTransaction(user.uid, tData);
   };
 
-  const handleDeleteTransaction = async (id: string) => {
-    const msg = lang === 'ar' ? 'هل أنت متأكد من حذف هذه المعاملة؟' : 'Are you sure you want to delete this transaction?';
-    if (window.confirm(msg)) {
-      try {
-        await dataService.deleteTransaction(user!.uid, id);
-      } catch (err) {
-        console.error("Delete failed:", err);
+  const handleConfirmDelete = async () => {
+    if (!user || !confirmDelete) return;
+
+    try {
+      if (confirmDelete.type === 'transaction') {
+        await dataService.deleteTransaction(user.uid, confirmDelete.id);
+      } else if (confirmDelete.type === 'budget') {
+        await dataService.deleteGoal(user.uid, confirmDelete.id);
+      } else if (confirmDelete.type === 'account') {
+        await dataService.deleteAccount(user.uid, confirmDelete.id);
       }
+    } catch (err) {
+      console.error("Deletion failed:", err);
+    } finally {
+      setConfirmDelete(null);
     }
   };
 
-  const handleDeleteGoal = async (id: string) => {
-    const msg = lang === 'ar' ? 'هل أنت متأكد من حذف هذه الميزانية؟' : 'Are you sure you want to delete this budget goal?';
-    if (window.confirm(msg)) {
-      try {
-        await dataService.deleteGoal(user!.uid, id);
-      } catch (err) {
-        console.error("Delete failed:", err);
-      }
-    }
+  const handleDeleteTransaction = (id: string) => {
+    setConfirmDelete({
+      id,
+      type: 'transaction',
+      message: lang === 'ar' ? 'هل أنت متأكد من حذف هذه المعاملة؟' : 'Are you sure you want to delete this transaction?'
+    });
   };
 
-  const handleDeleteAccount = async (id: string) => {
-    const msg = lang === 'ar' ? 'هل أنت متأكد من حذف هذا الحساب؟ سيؤدي ذلك إلى فقدان بيانات الرصيد الخاصة به.' : 'Are you sure you want to delete this account? This will permanently remove its balance tracking.';
-    if (window.confirm(msg)) {
-      try {
-        await dataService.deleteAccount(user!.uid, id);
-      } catch (err) {
-        console.error("Delete failed:", err);
-      }
-    }
+  const handleDeleteGoal = (id: string) => {
+    setConfirmDelete({
+      id,
+      type: 'budget',
+      message: lang === 'ar' ? 'هل أنت متأكد من حذف هذه الميزانية؟' : 'Are you sure you want to delete this budget goal?'
+    });
+  };
+
+  const handleDeleteAccount = (id: string) => {
+    setConfirmDelete({
+      id,
+      type: 'account',
+      message: lang === 'ar' ? 'هل أنت متأكد من حذف هذا الحساب؟ سيؤدي ذلك إلى فقدان بيانات الرصيد الخاصة به.' : 'Are you sure you want to delete this account? This will permanently remove its balance tracking.'
+    });
   };
 
   if (authLoading) {
@@ -401,7 +415,7 @@ const App: React.FC = () => {
             accountsCount={accounts.length} 
           />
         )}
-        {activeView === 'statement' && <StatementView accounts={accounts} transactions={transactions} currency={currency} lang={lang} />}
+        {activeView === 'statement' && <StatementView accounts={accounts} transactions={transactions} currency={currency} lang={lang} onDelete={handleDeleteTransaction} />}
       </main>
 
       {/* Mobile Nav */}
@@ -418,6 +432,16 @@ const App: React.FC = () => {
       {showForm && <TransactionForm accounts={accounts} onAdd={handleAddTransaction} onClose={() => setShowForm(false)} lang={lang} />}
       {showBudgetForm && <BudgetForm initialData={editingBudget} onAdd={(b: any) => dataService.saveGoal(user!.uid, b)} onClose={() => { setShowBudgetForm(false); setEditingBudget(null); }} lang={lang} />}
       {showAccountForm && <AccountForm initialData={editingAccount} onAdd={(a: any) => dataService.saveAccount(user!.uid, a)} onClose={() => { setShowAccountForm(false); setEditingAccount(null); }} lang={lang} />}
+
+      {/* Confirmation Modal */}
+      {confirmDelete && (
+        <ConfirmModal 
+          lang={lang}
+          message={confirmDelete.message}
+          onConfirm={handleConfirmDelete}
+          onCancel={() => setConfirmDelete(null)}
+        />
+      )}
     </div>
   );
 };
@@ -518,7 +542,7 @@ const ProfileView = ({ profile, lang, updateLanguage, currency, updateCurrencyBy
               {photoLoading ? (
                 <div className="flex flex-col items-center justify-center">
                   <Loader2 className="w-6 h-6 animate-spin mb-1" />
-                  <span className="text-[8px] font-black uppercase">Saving</span>
+                  <span className="text-[8px] font-black uppercase tracking-tighter text-blue-400">Saving</span>
                 </div>
               ) : photoURL ? (
                 <img src={photoURL} alt="Avatar" className="w-full h-full object-cover" />
@@ -598,7 +622,7 @@ const ProfileView = ({ profile, lang, updateLanguage, currency, updateCurrencyBy
   );
 };
 
-const StatementView = ({ accounts, transactions, currency, lang }: { accounts: Account[], transactions: Transaction[], currency: Currency, lang: Language }) => {
+const StatementView = ({ accounts, transactions, currency, lang, onDelete }: { accounts: Account[], transactions: Transaction[], currency: Currency, lang: Language, onDelete: (id: string) => void }) => {
   const t = translations[lang];
   const [selectedAccountId, setSelectedAccountId] = useState(accounts[0]?.id || '');
   const [period, setPeriod] = useState<'current' | 'last' | 'custom'>('current');
@@ -678,7 +702,7 @@ const StatementView = ({ accounts, transactions, currency, lang }: { accounts: A
         </div>
       </div>
 
-      <TransactionList transactions={filteredTransactions} lang={lang} onDelete={() => {}} />
+      <TransactionList transactions={filteredTransactions} lang={lang} onDelete={onDelete} />
     </div>
   );
 };
@@ -692,8 +716,6 @@ const AccountsView = ({ accounts, formatMoney, lang, onAddClick, onEditClick, on
         {accounts.map((acc: any) => {
            const isDebtAccount = acc.type === 'Credit Card';
            const limit = acc.creditLimit || 0;
-           // "Balance" is Available Funds. 
-           // In your favor if Available > Limit.
            const isSurplus = isDebtAccount && limit > 0 && acc.balance > limit;
            const usedPercent = limit > 0 ? Math.min(100, (acc.balance / limit) * 100) : 0;
            
