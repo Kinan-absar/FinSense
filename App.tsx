@@ -13,7 +13,7 @@ import { Language, translations } from './translations';
 import { GoogleGenAI } from "@google/genai";
 import { 
   Wallet, Plus, LayoutDashboard, History, Target, CreditCard, 
-  TrendingUp, TrendingDown, Languages, LogOut, Loader2, Globe, Trash2, Calendar, Clock, Edit2, User as UserIcon, FileText, Camera, ShieldAlert, Printer, Sparkles, RefreshCw
+  TrendingUp, TrendingDown, LogOut, Loader2, Globe, Trash2, Clock, Edit2, User as UserIcon, FileText, Camera, ShieldAlert, Printer, Sparkles, RefreshCw, AlertTriangle
 } from 'lucide-react';
 
 const App: React.FC = () => {
@@ -138,7 +138,6 @@ const App: React.FC = () => {
       .filter(acc => acc.type === 'Credit Card')
       .reduce((acc, curr) => {
         const limit = curr.creditLimit || 0;
-        // User logic: If available < limit, the difference is debt
         return acc + Math.max(0, limit - curr.balance);
       }, 0), 
     [accounts]
@@ -164,21 +163,12 @@ const App: React.FC = () => {
 
   const handleAddTransaction = async (tData: any) => {
     if (!user) return;
-    
-    // Impact source account (reduces available balance)
     const sourceAcc = accounts.find(a => a.id === tData.accountId);
-    if (sourceAcc) {
-      await dataService.updateAccountBalance(user.uid, sourceAcc.id, sourceAcc.balance - tData.amount);
-    }
-
-    // If settlement, impact target account (increases available balance)
+    if (sourceAcc) await dataService.updateAccountBalance(user.uid, sourceAcc.id, sourceAcc.balance - tData.amount);
     if (tData.isSettlement && tData.targetAccountId) {
       const targetAcc = accounts.find(a => a.id === tData.targetAccountId);
-      if (targetAcc) {
-        await dataService.updateAccountBalance(user.uid, targetAcc.id, targetAcc.balance + tData.amount);
-      }
+      if (targetAcc) await dataService.updateAccountBalance(user.uid, targetAcc.id, targetAcc.balance + tData.amount);
     }
-    
     await dataService.addTransaction(user.uid, tData);
   };
 
@@ -186,25 +176,17 @@ const App: React.FC = () => {
     if (!user) return;
     const oldT = transactions.find(t => t.id === id);
     if (!oldT) return;
-
-    // 1. Revert old impacts
     const oldSource = accounts.find(a => a.id === oldT.accountId);
     if (oldSource) await dataService.updateAccountBalance(user.uid, oldSource.id, oldSource.balance + oldT.amount);
-    
     if (oldT.isSettlement && oldT.targetAccountId) {
       const oldTarget = accounts.find(a => a.id === oldT.targetAccountId);
       if (oldTarget) await dataService.updateAccountBalance(user.uid, oldTarget.id, oldTarget.balance - oldT.amount);
     }
-
-    // 2. Apply new impacts
-    // We fetch freshest balances by simulating the state change locally first or assuming sequential updates
     const newSource = accounts.find(a => a.id === newData.accountId);
     if (newSource) {
-      // If same account, balance was already reverted
       const currentBal = newSource.balance + (newSource.id === oldT.accountId ? oldT.amount : 0);
       await dataService.updateAccountBalance(user.uid, newSource.id, currentBal - newData.amount);
     }
-
     if (newData.isSettlement && newData.targetAccountId) {
       const newTarget = accounts.find(a => a.id === newData.targetAccountId);
       if (newTarget) {
@@ -212,7 +194,6 @@ const App: React.FC = () => {
         await dataService.updateAccountBalance(user.uid, newTarget.id, currentBal + newData.amount);
       }
     }
-
     await dataService.updateTransaction(user.uid, id, newData);
   };
 
@@ -230,10 +211,8 @@ const App: React.FC = () => {
       if (confirmDelete.type === 'transaction') {
         const t = transactions.find(x => x.id === confirmDelete.id);
         if (t) {
-          // Revert impacts
           const s = accounts.find(a => a.id === t.accountId);
           if (s) await dataService.updateAccountBalance(user.uid, s.id, s.balance + t.amount);
-          
           if (t.isSettlement && t.targetAccountId) {
             const tr = accounts.find(a => a.id === t.targetAccountId);
             if (tr) await dataService.updateAccountBalance(user.uid, tr.id, tr.balance - t.amount);
@@ -252,12 +231,9 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen pb-24 lg:pb-0 bg-[#f8fafc]" dir={lang === 'ar' ? 'rtl' : 'ltr'}>
-      {/* Desktop Sidebar */}
       <nav className={`fixed ${lang === 'ar' ? 'right-0' : 'left-0'} top-0 h-full w-64 bg-white border-${lang === 'ar' ? 'l' : 'r'} border-gray-100 p-6 hidden lg:flex flex-col z-30`}>
         <div className="flex items-center gap-3 mb-12">
-          <div className="w-10 h-10 bg-blue-600 rounded-2xl flex items-center justify-center text-white shadow-xl shadow-blue-100">
-            <Wallet className="w-6 h-6" />
-          </div>
+          <div className="w-10 h-10 bg-blue-600 rounded-2xl flex items-center justify-center text-white shadow-xl shadow-blue-100"><Wallet className="w-6 h-6" /></div>
           <span className="text-xl font-black bg-clip-text text-transparent bg-gradient-to-r from-blue-600 to-indigo-700 tracking-tight">FinSense</span>
         </div>
         <div className="space-y-2 overflow-y-auto max-h-[70vh] custom-scrollbar pr-2">
@@ -285,7 +261,6 @@ const App: React.FC = () => {
         </div>
       </nav>
 
-      {/* Main Content */}
       <main className={`${lang === 'ar' ? 'lg:mr-64' : 'lg:ml-64'} p-4 lg:p-10 max-w-7xl mx-auto min-h-screen`}>
         <header className="flex justify-between items-center lg:items-start mb-6 lg:mb-10">
           <div>
@@ -301,18 +276,10 @@ const App: React.FC = () => {
           <div className="flex items-center gap-2 lg:gap-3">
              {activeView === 'dashboard' && (
                 <div className="lg:hidden flex-shrink-0">
-                   {userProfile?.photoURL ? (
-                     <img src={userProfile.photoURL} alt="Profile" className="w-9 h-9 rounded-xl object-cover border border-white shadow-sm" />
-                   ) : (
-                     <div className="w-9 h-9 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center text-xs font-black border border-blue-100 uppercase">
-                       {userName.charAt(0)}
-                     </div>
-                   )}
+                   {userProfile?.photoURL ? <img src={userProfile.photoURL} alt="Profile" className="w-9 h-9 rounded-xl object-cover border border-white shadow-sm" /> : <div className="w-9 h-9 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center text-xs font-black border border-blue-100 uppercase">{userName.charAt(0)}</div>}
                 </div>
              )}
-             <button onClick={() => { setEditingTransaction(null); setShowForm(true); }} className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 lg:px-6 py-2.5 lg:py-3.5 rounded-xl lg:rounded-2xl font-black shadow-lg lg:shadow-xl shadow-blue-100 active:scale-95 transition-all text-[10px] lg:text-sm">
-               <Plus className="w-3.5 h-3.5 lg:w-5 lg:h-5" /> <span className="uppercase tracking-widest">{t.entry}</span>
-             </button>
+             <button onClick={() => { setEditingTransaction(null); setShowForm(true); }} className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 lg:px-6 py-2.5 lg:py-3.5 rounded-xl lg:rounded-2xl font-black shadow-lg lg:shadow-xl shadow-blue-100 active:scale-95 transition-all text-[10px] lg:text-sm"><Plus className="w-3.5 h-3.5 lg:w-5 lg:h-5" /> <span className="uppercase tracking-widest">{t.entry}</span></button>
           </div>
         </header>
 
@@ -324,7 +291,7 @@ const App: React.FC = () => {
               <StatCard title={t.total_debt} value={formatMoney(totalDebt)} trend={t.trend_debt} trendType="down" icon={<ShieldAlert className="w-4 h-4 lg:w-5 lg:h-5 text-rose-500" />} lang={lang} isDebt onClick={() => setActiveView('accounts')} />
               <StatCard title={t.budget_health} value={`${goals.length}`} trend={t.trend_goals} trendType="up" icon={<Target className="w-4 h-4 lg:w-5 lg:h-5" />} lang={lang} onClick={() => setActiveView('budgets')} />
             </div>
-            <AIInsights transactions={transactions} lang={lang} />
+            <AIInsights transactions={transactions} lang={lang} userId={user?.uid || ''} />
             <Charts transactions={transactions} lang={lang} />
           </div>
         )}
@@ -336,7 +303,6 @@ const App: React.FC = () => {
         {activeView === 'statement' && <StatementView profile={userProfile} accounts={accounts} transactions={transactions} currency={currency} lang={lang} onDelete={handleDeleteTransaction} />}
       </main>
 
-      {/* Mobile Nav */}
       <nav className="fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-md border-t border-gray-100 px-2 py-4 flex justify-around items-center lg:hidden z-40 shadow-[0_-10px_40px_rgba(0,0,0,0.03)] rounded-t-[2.5rem]">
         <MobileNavLink icon={<LayoutDashboard className="w-5 h-5" />} active={activeView === 'dashboard'} onClick={() => setActiveView('dashboard')} />
         <MobileNavLink icon={<History className="w-5 h-5" />} active={activeView === 'history'} onClick={() => setActiveView('history')} />
@@ -355,51 +321,107 @@ const App: React.FC = () => {
   );
 };
 
-const AIInsights = ({ transactions, lang }: { transactions: Transaction[], lang: Language }) => {
+const AIInsights = ({ transactions, lang, userId }: { transactions: Transaction[], lang: Language, userId: string }) => {
   const [insight, setInsight] = useState<string | null>(null);
+  const [lastTxCount, setLastTxCount] = useState<number>(0);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const getInsight = async () => {
+  const fetchStoredInsight = useCallback(async () => {
+    const stored = await dataService.getAIInsight(userId);
+    if (stored) {
+      setInsight(stored.text);
+      setLastTxCount(stored.transactionCount);
+    }
+    return stored;
+  }, [userId]);
+
+  const generateInsight = async (isManual = false) => {
     if (transactions.length < 3) return;
     setLoading(true);
+    setError(null);
     try {
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       const summary = transactions.slice(0, 15).map(t => `${t.date}: ${t.amount} for ${t.category} (${t.description}) - Feeling ${t.mood}`).join('\n');
+      
       const response = await ai.models.generateContent({
         model: 'gemini-3-flash-preview',
-        contents: `Analyze these recent financial transactions and provide 2-3 sentences of neutral, professional behavioral feedback. Focus on psychological triggers, patterns (like emotional spending), and habit loops. Language: ${lang === 'ar' ? 'Arabic' : 'English'}. Data:\n${summary}`,
+        contents: `Analyze these recent financial transactions and provide 2-3 sentences of neutral, professional behavioral feedback. 
+        Focus on psychological triggers and habits. 
+        MANDATORY: You MUST respond in the following language: ${lang === 'ar' ? 'Arabic' : 'English'}.
+        Data:\n${summary}`,
       });
-      setInsight(response.text || null);
+      
+      const newInsight = response.text || null;
+      if (newInsight) {
+        setInsight(newInsight);
+        setLastTxCount(transactions.length);
+        await dataService.saveAIInsight(userId, newInsight, transactions.length);
+      }
+    } catch (err: any) {
+      if (err.message?.includes('429')) {
+        setError(lang === 'ar' ? 'تم الوصول للحد المسموح. يرجى المحاولة لاحقاً.' : 'Quota exceeded. Please try again in a few minutes.');
+      } else {
+        setError(lang === 'ar' ? 'حدث خطأ غير متوقع.' : 'Something went wrong.');
+      }
     } finally {
       setLoading(false);
     }
   };
 
-  useEffect(() => { if (transactions.length >= 3 && !insight) getInsight(); }, [transactions]);
+  useEffect(() => {
+    const init = async () => {
+      const stored = await fetchStoredInsight();
+      if (!stored && transactions.length >= 3) {
+        generateInsight();
+      }
+    };
+    init();
+  }, [userId]);
 
   if (transactions.length < 3) return null;
+
+  const isStale = transactions.length !== lastTxCount && lastTxCount !== 0;
 
   return (
     <div className="bg-gradient-to-br from-indigo-500 to-blue-700 p-6 lg:p-8 rounded-[2.5rem] shadow-xl text-white relative overflow-hidden group">
       <div className="absolute top-0 right-0 p-8 opacity-10"><Sparkles className="w-32 h-32" /></div>
       <div className="relative z-10 flex flex-col lg:flex-row lg:items-center gap-6">
-        <div className="p-4 bg-white/20 backdrop-blur-xl rounded-3xl shrink-0 border border-white/20"><Sparkles className="w-8 h-8 text-blue-100" /></div>
+        <div className="p-4 bg-white/20 backdrop-blur-xl rounded-3xl shrink-0 border border-white/20">
+          {error ? <AlertTriangle className="w-8 h-8 text-amber-300" /> : <Sparkles className="w-8 h-8 text-blue-100" />}
+        </div>
         <div className="flex-1">
-          <p className="text-[10px] font-black uppercase tracking-[0.3em] text-blue-100 mb-2 opacity-70">{lang === 'ar' ? 'رؤى الذكاء الاصطناعي' : 'AI Behavioral Insights'}</p>
+          <div className="flex items-center gap-2 mb-2">
+            <p className="text-[10px] font-black uppercase tracking-[0.3em] text-blue-100 opacity-70">
+              {lang === 'ar' ? 'رؤى الذكاء الاصطناعي' : 'AI Behavioral Insights'}
+            </p>
+            {isStale && !loading && (
+              <span className="w-2 h-2 bg-amber-400 rounded-full animate-pulse shadow-lg shadow-amber-400/50" />
+            )}
+          </div>
           {loading ? (
-            <div className="flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /><span className="text-sm font-bold opacity-50">Thinking...</span></div>
+            <div className="flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /><span className="text-sm font-bold opacity-50">{lang === 'ar' ? 'جاري التفكير...' : 'Thinking...'}</span></div>
+          ) : error ? (
+            <p className="text-sm font-bold text-amber-100">{error}</p>
           ) : (
-            <p className="text-sm lg:text-base font-bold leading-relaxed">{insight || "Compiling behavioral patterns..."}</p>
+            <p className="text-sm lg:text-base font-bold leading-relaxed">{insight || (lang === 'ar' ? 'جاري تحليل بياناتك...' : "Compiling behavioral patterns...")}</p>
           )}
         </div>
-        <button onClick={getInsight} className="bg-white/10 hover:bg-white/20 p-3 rounded-2xl transition-all active:rotate-180 duration-500"><RefreshCw className={`w-5 h-5 ${loading ? 'animate-spin' : ''}`} /></button>
+        <button 
+          onClick={() => generateInsight(true)} 
+          disabled={loading}
+          className="bg-white/10 hover:bg-white/20 p-3 rounded-2xl transition-all active:rotate-180 duration-500 disabled:opacity-30"
+          title={lang === 'ar' ? 'تحديث الرؤى' : 'Refresh Insights'}
+        >
+          <RefreshCw className={`w-5 h-5 ${loading ? 'animate-spin' : ''}`} />
+        </button>
       </div>
     </div>
   );
 };
 
 const ProfileView = ({ profile, lang, updateLanguage, currency, updateCurrencyByCode }: any) => {
-  const t = translations[lang];
+  const tStrings = translations[lang];
   const [name, setName] = useState(profile?.name || '');
   const [photoURL, setPhotoURL] = useState(profile?.photoURL || '');
   const [loading, setLoading] = useState(false);
@@ -448,7 +470,7 @@ const ProfileView = ({ profile, lang, updateLanguage, currency, updateCurrencyBy
         </div>
         <div className="space-y-6">
           <div>
-            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-2">{t.full_name}</label>
+            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-2">{tStrings.full_name}</label>
             <input 
               type="text" 
               value={name} 
@@ -457,13 +479,13 @@ const ProfileView = ({ profile, lang, updateLanguage, currency, updateCurrencyBy
               className="w-full bg-gray-50 border border-gray-100 p-4 rounded-2xl outline-none font-bold text-gray-800 focus:bg-white focus:border-blue-100 transition-colors text-sm" 
             />
           </div>
-          <button onClick={handleUpdate} disabled={loading} className="w-full bg-blue-600 text-white p-5 rounded-2xl font-black shadow-xl uppercase tracking-widest text-xs transition-all active:scale-95">{loading ? <Loader2 className="w-5 h-5 animate-spin mx-auto" /> : t.update_profile}</button>
+          <button onClick={handleUpdate} disabled={loading} className="w-full bg-blue-600 text-white p-5 rounded-2xl font-black shadow-xl uppercase tracking-widest text-xs transition-all active:scale-95">{loading ? <Loader2 className="w-5 h-5 animate-spin mx-auto" /> : tStrings.update_profile}</button>
         </div>
       </div>
       <div className="bg-white p-8 rounded-[2.5rem] border border-gray-100 shadow-sm space-y-8">
         <div><h3 className="text-lg font-black text-gray-900 mb-6 flex items-center gap-2"><Globe className="w-5 h-5 text-blue-600" />{lang === 'ar' ? 'التفضيلات' : 'Preferences'}</h3><div className="space-y-6">
-          <div><label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-4">{t.language}</label><div className="flex gap-3"><button onClick={() => updateLanguage('en')} className={`flex-1 py-4 rounded-2xl text-sm font-bold border transition-all ${lang === 'en' ? 'bg-blue-600 text-white shadow-xl shadow-blue-100 border-blue-600' : 'bg-gray-50 text-gray-400 border-gray-100'}`}>English</button><button onClick={() => updateLanguage('ar')} className={`flex-1 py-4 rounded-2xl text-sm font-bold border transition-all ${lang === 'ar' ? 'bg-blue-600 text-white shadow-xl shadow-blue-100 border-blue-600' : 'bg-gray-50 text-gray-400 border-gray-100'}`}>العربية</button></div></div>
-          <div><label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-4">{t.currency}</label><select value={currency.code} onChange={(e) => updateCurrencyByCode(e.target.value)} className="w-full py-5 px-6 bg-gray-50 border border-gray-100 rounded-2xl text-sm font-bold text-gray-900 outline-none focus:bg-white focus:border-blue-100 transition-colors">{CURRENCIES.map(c => <option key={c.code} value={c.code}>{c.label} ({c.symbol})</option>)}</select></div>
+          <div><label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-4">{tStrings.language}</label><div className="flex gap-3"><button onClick={() => updateLanguage('en')} className={`flex-1 py-4 rounded-2xl text-sm font-bold border transition-all ${lang === 'en' ? 'bg-blue-600 text-white shadow-xl shadow-blue-100 border-blue-600' : 'bg-gray-50 text-gray-400 border-gray-100'}`}>English</button><button onClick={() => updateLanguage('ar')} className={`flex-1 py-4 rounded-2xl text-sm font-bold border transition-all ${lang === 'ar' ? 'bg-blue-600 text-white shadow-xl shadow-blue-100 border-blue-600' : 'bg-gray-50 text-gray-400 border-gray-100'}`}>العربية</button></div></div>
+          <div><label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-4">{tStrings.currency}</label><select value={currency.code} onChange={(e) => updateCurrencyByCode(e.target.value)} className="w-full py-5 px-6 bg-gray-50 border border-gray-100 rounded-2xl text-sm font-bold text-gray-900 outline-none focus:bg-white focus:border-blue-100 transition-colors">{CURRENCIES.map(c => <option key={c.code} value={c.code}>{c.label} ({c.symbol})</option>)}</select></div>
         </div></div>
       </div>
     </div>

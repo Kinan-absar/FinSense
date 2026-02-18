@@ -1,13 +1,13 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import { CATEGORIES, MOODS } from '../constants';
 import { Transaction, Category, Mood, Account } from '../types';
-import { PlusCircle, X, ArrowDownRight, RefreshCw } from 'lucide-react';
+import { PlusCircle, X, ArrowDownRight, RefreshCw, Camera, Loader2, Sparkles, CheckCircle2 } from 'lucide-react';
 import { Language, translations } from '../translations';
+import { GoogleGenAI, Type } from "@google/genai";
 
 interface Props {
   accounts: Account[];
   initialData?: Transaction | null;
-  // Fixed: simplified onAdd parameter since properties are now in Transaction interface
   onAdd: (t: Omit<Transaction, 'userId'>) => void;
   onUpdate?: (id: string, t: Partial<Transaction>) => void;
   onClose: () => void;
@@ -15,22 +15,94 @@ interface Props {
 }
 
 const TransactionForm: React.FC<Props> = ({ accounts, initialData, onAdd, onUpdate, onClose, lang }) => {
-  const t = translations[lang];
+  const tStrings = translations[lang];
   const [amount, setAmount] = useState(initialData?.amount.toString() || '');
   const [category, setCategory] = useState<Category>(initialData?.category || CATEGORIES[0]);
   const [description, setDescription] = useState(initialData?.description || '');
   const [mood, setMood] = useState<Mood>(initialData?.mood || 'Neutral');
   const [accountId, setAccountId] = useState(initialData?.accountId || accounts[0]?.id || '');
-  // Fixed: access targetAccountId and isSettlement properties on Transaction
   const [targetAccountId, setTargetAccountId] = useState(initialData?.targetAccountId || '');
   const [isSettlement, setIsSettlement] = useState(initialData?.isSettlement || false);
   const [date, setDate] = useState(initialData?.date || new Date().toISOString().split('T')[0]);
   const [time, setTime] = useState(initialData?.time || new Date().toTimeString().slice(0, 5));
 
+  // OCR States
+  const [scanning, setScanning] = useState(false);
+  const [scanStatus, setScanStatus] = useState<'idle' | 'success' | 'error'>('idle');
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   const creditCardAccounts = useMemo(() => accounts.filter(a => a.type === 'Credit Card'), [accounts]);
   const fundingAccounts = useMemo(() => accounts.filter(a => a.type !== 'Credit Card'), [accounts]);
 
   const isEditing = !!initialData;
+
+  const handleScanReceipt = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setScanning(true);
+    setScanStatus('idle');
+
+    try {
+      const reader = new FileReader();
+      reader.onloadend = async () => {
+        const base64Data = (reader.result as string).split(',')[1];
+        
+        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        const response = await ai.models.generateContent({
+          model: 'gemini-2.5-flash-image',
+          contents: [
+            {
+              inlineData: {
+                data: base64Data,
+                mimeType: file.type,
+              },
+            },
+            {
+              text: `Analyze this receipt. Extract the following details as JSON:
+              - amount: number
+              - date: string (YYYY-MM-DD)
+              - description: string (Short summary)
+              - category: string (Must be one of: ${CATEGORIES.join(', ')})
+              - mood: string (Guess mood based on items: Happy, Excited, Neutral, Tired, Stressed. Must be one of: ${MOODS.join(', ')})
+              Return ONLY the JSON object.`,
+            },
+          ],
+          config: {
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                amount: { type: Type.NUMBER },
+                date: { type: Type.STRING },
+                description: { type: Type.STRING },
+                category: { type: Type.STRING },
+                mood: { type: Type.STRING }
+              },
+              required: ["amount", "description"]
+            }
+          }
+        });
+
+        const result = JSON.parse(response.text || '{}');
+        
+        if (result.amount) setAmount(result.amount.toString());
+        if (result.description) setDescription(result.description);
+        if (result.date) setDate(result.date);
+        if (result.category && CATEGORIES.includes(result.category)) setCategory(result.category as Category);
+        if (result.mood && MOODS.includes(result.mood)) setMood(result.mood as Mood);
+
+        setScanStatus('success');
+        setTimeout(() => setScanStatus('idle'), 3000);
+      };
+      reader.readAsDataURL(file);
+    } catch (err) {
+      console.error("Scan error:", err);
+      setScanStatus('error');
+    } finally {
+      setScanning(false);
+    }
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -40,7 +112,7 @@ const TransactionForm: React.FC<Props> = ({ accounts, initialData, onAdd, onUpda
     const transactionData: any = {
       amount: Number(amount),
       category: isSettlement ? 'Settlement' : category,
-      description: isSettlement ? (description.startsWith(t.is_settlement) ? description : `${t.is_settlement}: ${description}`) : description,
+      description: isSettlement ? (description.startsWith(tStrings.is_settlement) ? description : `${tStrings.is_settlement}: ${description}`) : description,
       mood,
       date,
       time,
@@ -65,7 +137,7 @@ const TransactionForm: React.FC<Props> = ({ accounts, initialData, onAdd, onUpda
       <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-200">
         <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
           <h2 className="text-xl font-bold text-gray-800">
-            {isEditing ? (lang === 'ar' ? 'تعديل المعاملة' : 'Edit Transaction') : t.log_transaction}
+            {isEditing ? (lang === 'ar' ? 'تعديل المعاملة' : 'Edit Transaction') : tStrings.log_transaction}
           </h2>
           <button onClick={onClose} className="p-2 hover:bg-gray-200 rounded-full transition-colors">
             <X className="w-5 h-5 text-gray-500" />
@@ -73,10 +145,35 @@ const TransactionForm: React.FC<Props> = ({ accounts, initialData, onAdd, onUpda
         </div>
         
         <form onSubmit={handleSubmit} className="p-6 space-y-4 max-h-[80vh] overflow-y-auto custom-scrollbar">
-          <div className="flex items-center justify-between p-4 bg-blue-50/50 rounded-2xl border border-blue-100 mb-2">
+          {/* AI OCR Button */}
+          {!isEditing && !isSettlement && (
+            <div className="mb-2">
+              <input type="file" accept="image/*" className="hidden" ref={fileInputRef} onChange={handleScanReceipt} />
+              <button 
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={scanning}
+                className={`w-full group flex items-center justify-center gap-3 p-4 rounded-2xl border-2 border-dashed transition-all active:scale-95 ${scanStatus === 'success' ? 'bg-emerald-50 border-emerald-200 text-emerald-600' : 'bg-blue-50 border-blue-100 text-blue-600 hover:border-blue-300'}`}
+              >
+                {scanning ? (
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                ) : scanStatus === 'success' ? (
+                  <CheckCircle2 className="w-5 h-5" />
+                ) : (
+                  <Camera className="w-5 h-5 group-hover:scale-110 transition-transform" />
+                )}
+                <span className="text-xs font-black uppercase tracking-widest">
+                  {scanning ? tStrings.scanning : scanStatus === 'success' ? tStrings.scan_success : tStrings.scan_receipt}
+                </span>
+                {!scanning && scanStatus !== 'success' && <Sparkles className="w-4 h-4 text-blue-400 opacity-0 group-hover:opacity-100" />}
+              </button>
+            </div>
+          )}
+
+          <div className="flex items-center justify-between p-4 bg-blue-50/50 rounded-2xl border border-blue-100">
             <div className="flex items-center gap-3">
                <ArrowDownRight className="w-5 h-5 text-blue-600" />
-               <span className="text-sm font-bold text-blue-900">{t.is_settlement}</span>
+               <span className="text-sm font-bold text-blue-900">{tStrings.is_settlement}</span>
             </div>
             <button 
               type="button"
@@ -97,7 +194,7 @@ const TransactionForm: React.FC<Props> = ({ accounts, initialData, onAdd, onUpda
           </div>
 
           <div>
-            <label className="block text-xs font-bold text-gray-400 uppercase tracking-widest mb-2">{t.amount}</label>
+            <label className="block text-xs font-bold text-gray-400 uppercase tracking-widest mb-2">{tStrings.amount}</label>
             <input
               required
               type="number"
@@ -110,7 +207,7 @@ const TransactionForm: React.FC<Props> = ({ accounts, initialData, onAdd, onUpda
           </div>
 
           <div>
-            <label className="block text-xs font-bold text-gray-400 uppercase tracking-widest mb-2">{t.source_account}</label>
+            <label className="block text-xs font-bold text-gray-400 uppercase tracking-widest mb-2">{tStrings.source_account}</label>
             <select
               value={accountId}
               onChange={(e) => setAccountId(e.target.value)}
@@ -124,7 +221,7 @@ const TransactionForm: React.FC<Props> = ({ accounts, initialData, onAdd, onUpda
 
           {isSettlement && (
             <div className="animate-in slide-in-from-top-2">
-              <label className="block text-xs font-bold text-gray-400 uppercase tracking-widest mb-2">{t.target_credit_card}</label>
+              <label className="block text-xs font-bold text-gray-400 uppercase tracking-widest mb-2">{tStrings.target_credit_card}</label>
               <select
                 required
                 value={targetAccountId}
@@ -144,13 +241,13 @@ const TransactionForm: React.FC<Props> = ({ accounts, initialData, onAdd, onUpda
 
           {!isSettlement && (
             <select value={category} onChange={e => setCategory(e.target.value as Category)} className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl font-bold text-sm">
-              {CATEGORIES.filter(c => c !== 'Settlement').map(c => <option key={c} value={c}>{(t.categories as any)[c]}</option>)}
+              {CATEGORIES.filter(c => c !== 'Settlement').map(c => <option key={c} value={c}>{(tStrings.categories as any)[c]}</option>)}
             </select>
           )}
 
           <div className="flex flex-wrap gap-2">
             {MOODS.map(m => (
-              <button key={m} type="button" onClick={() => setMood(m)} className={`px-4 py-2 rounded-xl text-xs font-bold transition-all active:scale-95 ${mood === m ? 'bg-blue-600 text-white shadow-lg' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>{(t.moods as any)[m]}</button>
+              <button key={m} type="button" onClick={() => setMood(m)} className={`px-4 py-2 rounded-xl text-xs font-bold transition-all active:scale-95 ${mood === m ? 'bg-blue-600 text-white shadow-lg' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>{(tStrings.moods as any)[m]}</button>
             ))}
           </div>
 
@@ -159,7 +256,7 @@ const TransactionForm: React.FC<Props> = ({ accounts, initialData, onAdd, onUpda
             value={description} 
             onChange={e => setDescription(e.target.value)} 
             className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl font-bold text-sm outline-none focus:ring-2 focus:ring-blue-500/20" 
-            placeholder={t.description} 
+            placeholder={tStrings.description} 
           />
 
           <button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white font-black py-4 rounded-2xl shadow-xl shadow-blue-100 uppercase tracking-widest text-xs transition-all active:scale-95 flex items-center justify-center gap-2">

@@ -64,6 +64,22 @@ export const dataService = {
     return setDoc(doc(db, "users", userId, "config", "preferences"), { ...cleanObject(settings), updatedAt: serverTimestamp() });
   },
 
+  // AI Insight Persistence
+  saveAIInsight: async (userId: string, insight: string, transactionCount: number) => {
+    if (!userId) return;
+    return setDoc(doc(db, "users", userId, "config", "ai_insight"), {
+      text: insight,
+      transactionCount,
+      updatedAt: serverTimestamp()
+    });
+  },
+
+  getAIInsight: async (userId: string) => {
+    if (!userId) return null;
+    const snap = await getDoc(doc(db, "users", userId, "config", "ai_insight"));
+    return snap.exists() ? snap.data() : null;
+  },
+
   subscribe: <T>(userId: string, subCollection: string, callback: (data: T[]) => void) => {
     if (!userId) return () => {};
     const q = query(collection(db, "users", userId, subCollection));

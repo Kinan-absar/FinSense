@@ -77,6 +77,10 @@ export const translations = {
     profile_picture: 'Profile Picture URL',
     surplus: 'Account Surplus',
     available_funds: 'Available Funds',
+    scan_receipt: 'Scan Receipt',
+    scanning: 'Scanning...',
+    scan_success: 'Data extracted!',
+    scan_error: 'Could not read receipt.',
     categories: {
       'Food & Dining': 'Food & Dining',
       'Transportation': 'Transportation',
@@ -180,6 +184,10 @@ export const translations = {
     profile_picture: 'رابط صورة الملف الشخصي',
     surplus: 'فائض الحساب',
     available_funds: 'الأموال المتاحة',
+    scan_receipt: 'مسح الفاتورة',
+    scanning: 'جاري المسح...',
+    scan_success: 'تم استخراج البيانات!',
+    scan_error: 'تعذر قراءة الفاتورة.',
     categories: {
       'Food & Dining': 'مطاعم وطعام',
       'Transportation': 'مواصلات',
