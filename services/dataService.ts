@@ -14,10 +14,28 @@ import { db } from "../firebase";
 import { Transaction, BudgetGoal, Account, UserSettings, UserProfile } from "../types";
 
 const cleanObject = (obj: any) => {
-  const newObj = { ...obj };
-  Object.keys(newObj).forEach(key => {
-    if (newObj[key] === undefined) {
-      delete newObj[key];
+  if (!obj || typeof obj !== 'object') return obj;
+  const newObj: any = Array.isArray(obj) ? [] : {};
+  
+  Object.keys(obj).forEach(key => {
+    const val = obj[key];
+    // Exclude undefined and complex circular parts if any
+    if (val === undefined) return;
+    
+    // Primitive or simple object
+    if (val === null || typeof val !== 'object') {
+      newObj[key] = val;
+    } else if (val.nanoseconds !== undefined && val.seconds !== undefined) {
+      // Keep Firestore timestamps as is
+      newObj[key] = val;
+    } else {
+      // Basic plain object or array
+      try {
+        newObj[key] = JSON.parse(JSON.stringify(val));
+      } catch (e) {
+        // Fallback for non-serializable parts
+        newObj[key] = null;
+      }
     }
   });
   return newObj;
@@ -64,22 +82,6 @@ export const dataService = {
     return setDoc(doc(db, "users", userId, "config", "preferences"), { ...cleanObject(settings), updatedAt: serverTimestamp() });
   },
 
-  // AI Insight Persistence
-  saveAIInsight: async (userId: string, insight: string, transactionCount: number) => {
-    if (!userId) return;
-    return setDoc(doc(db, "users", userId, "config", "ai_insight"), {
-      text: insight,
-      transactionCount,
-      updatedAt: serverTimestamp()
-    });
-  },
-
-  getAIInsight: async (userId: string) => {
-    if (!userId) return null;
-    const snap = await getDoc(doc(db, "users", userId, "config", "ai_insight"));
-    return snap.exists() ? snap.data() : null;
-  },
-
   subscribe: <T>(userId: string, subCollection: string, callback: (data: T[]) => void) => {
     if (!userId) return () => {};
     const q = query(collection(db, "users", userId, subCollection));
@@ -93,8 +95,7 @@ export const dataService = {
 
   addTransaction: async (userId: string, transaction: Omit<Transaction, 'id' | 'userId'>) => {
     if (!userId) return;
-    const { id, ...cleanTransaction } = transaction as any;
-    return addDoc(collection(db, "users", userId, "transactions"), cleanObject({ ...cleanTransaction, userId, createdAt: serverTimestamp() }));
+    return addDoc(collection(db, "users", userId, "transactions"), cleanObject({ ...transaction, userId, createdAt: serverTimestamp() }));
   },
 
   updateTransaction: async (userId: string, transactionId: string, transaction: Partial<Transaction>) => {
@@ -108,7 +109,6 @@ export const dataService = {
     try {
       const docRef = doc(db, "users", userId, "transactions", transactionId);
       await deleteDoc(docRef);
-      console.log(`Deleted transaction ${transactionId}`);
     } catch (e) {
       console.error("Failed to delete transaction", e);
       throw e;
@@ -127,7 +127,6 @@ export const dataService = {
     try {
       const docRef = doc(db, "users", userId, "budgets", goalId);
       await deleteDoc(docRef);
-      console.log(`Deleted goal ${goalId}`);
     } catch (e) {
       console.error("Failed to delete goal", e);
       throw e;
@@ -151,7 +150,6 @@ export const dataService = {
     try {
       const docRef = doc(db, "users", userId, "accounts", accountId);
       await deleteDoc(docRef);
-      console.log(`Deleted account ${accountId}`);
     } catch (e) {
       console.error("Failed to delete account", e);
       throw e;

@@ -10,10 +10,9 @@ import Charts from './components/Charts';
 import AuthScreen from './components/AuthScreen';
 import ConfirmModal from './components/ConfirmModal';
 import { Language, translations } from './translations';
-import { GoogleGenAI } from "@google/genai";
 import { 
   Wallet, Plus, LayoutDashboard, History, Target, CreditCard, 
-  TrendingUp, TrendingDown, LogOut, Loader2, Globe, Trash2, Clock, Edit2, User as UserIcon, FileText, Camera, ShieldAlert, Printer, Sparkles, RefreshCw, AlertTriangle
+  TrendingUp, TrendingDown, LogOut, Loader2, Globe, Trash2, Clock, Edit2, User as UserIcon, FileText, Camera, ShieldAlert, Printer, Calendar
 } from 'lucide-react';
 
 const App: React.FC = () => {
@@ -291,7 +290,6 @@ const App: React.FC = () => {
               <StatCard title={t.total_debt} value={formatMoney(totalDebt)} trend={t.trend_debt} trendType="down" icon={<ShieldAlert className="w-4 h-4 lg:w-5 lg:h-5 text-rose-500" />} lang={lang} isDebt onClick={() => setActiveView('accounts')} />
               <StatCard title={t.budget_health} value={`${goals.length}`} trend={t.trend_goals} trendType="up" icon={<Target className="w-4 h-4 lg:w-5 lg:h-5" />} lang={lang} onClick={() => setActiveView('budgets')} />
             </div>
-            <AIInsights transactions={transactions} lang={lang} userId={user?.uid || ''} />
             <Charts transactions={transactions} lang={lang} />
           </div>
         )}
@@ -317,105 +315,6 @@ const App: React.FC = () => {
       {showBudgetForm && <BudgetForm initialData={editingBudget} onAdd={(b: any) => dataService.saveGoal(user!.uid, b)} onClose={() => { setShowBudgetForm(false); setEditingBudget(null); }} lang={lang} />}
       {showAccountForm && <AccountForm initialData={editingAccount} onAdd={(a: any) => dataService.saveAccount(user!.uid, a)} onClose={() => { setShowAccountForm(false); setEditingAccount(null); }} lang={lang} />}
       {confirmDelete && <ConfirmModal lang={lang} message={confirmDelete.message} onConfirm={handleConfirmDelete} onCancel={() => setConfirmDelete(null)} />}
-    </div>
-  );
-};
-
-const AIInsights = ({ transactions, lang, userId }: { transactions: Transaction[], lang: Language, userId: string }) => {
-  const [insight, setInsight] = useState<string | null>(null);
-  const [lastTxCount, setLastTxCount] = useState<number>(0);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const fetchStoredInsight = useCallback(async () => {
-    const stored = await dataService.getAIInsight(userId);
-    if (stored) {
-      setInsight(stored.text);
-      setLastTxCount(stored.transactionCount);
-    }
-    return stored;
-  }, [userId]);
-
-  const generateInsight = async (isManual = false) => {
-    if (transactions.length < 3) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-      const summary = transactions.slice(0, 15).map(t => `${t.date}: ${t.amount} for ${t.category} (${t.description}) - Feeling ${t.mood}`).join('\n');
-      
-      const response = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: `Analyze these recent financial transactions and provide 2-3 sentences of neutral, professional behavioral feedback. 
-        Focus on psychological triggers and habits. 
-        MANDATORY: You MUST respond in the following language: ${lang === 'ar' ? 'Arabic' : 'English'}.
-        Data:\n${summary}`,
-      });
-      
-      const newInsight = response.text || null;
-      if (newInsight) {
-        setInsight(newInsight);
-        setLastTxCount(transactions.length);
-        await dataService.saveAIInsight(userId, newInsight, transactions.length);
-      }
-    } catch (err: any) {
-      if (err.message?.includes('429')) {
-        setError(lang === 'ar' ? 'تم الوصول للحد المسموح. يرجى المحاولة لاحقاً.' : 'Quota exceeded. Please try again in a few minutes.');
-      } else {
-        setError(lang === 'ar' ? 'حدث خطأ غير متوقع.' : 'Something went wrong.');
-      }
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    const init = async () => {
-      const stored = await fetchStoredInsight();
-      if (!stored && transactions.length >= 3) {
-        generateInsight();
-      }
-    };
-    init();
-  }, [userId]);
-
-  if (transactions.length < 3) return null;
-
-  const isStale = transactions.length !== lastTxCount && lastTxCount !== 0;
-
-  return (
-    <div className="bg-gradient-to-br from-indigo-500 to-blue-700 p-6 lg:p-8 rounded-[2.5rem] shadow-xl text-white relative overflow-hidden group">
-      <div className="absolute top-0 right-0 p-8 opacity-10"><Sparkles className="w-32 h-32" /></div>
-      <div className="relative z-10 flex flex-col lg:flex-row lg:items-center gap-6">
-        <div className="p-4 bg-white/20 backdrop-blur-xl rounded-3xl shrink-0 border border-white/20">
-          {error ? <AlertTriangle className="w-8 h-8 text-amber-300" /> : <Sparkles className="w-8 h-8 text-blue-100" />}
-        </div>
-        <div className="flex-1">
-          <div className="flex items-center gap-2 mb-2">
-            <p className="text-[10px] font-black uppercase tracking-[0.3em] text-blue-100 opacity-70">
-              {lang === 'ar' ? 'رؤى الذكاء الاصطناعي' : 'AI Behavioral Insights'}
-            </p>
-            {isStale && !loading && (
-              <span className="w-2 h-2 bg-amber-400 rounded-full animate-pulse shadow-lg shadow-amber-400/50" />
-            )}
-          </div>
-          {loading ? (
-            <div className="flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /><span className="text-sm font-bold opacity-50">{lang === 'ar' ? 'جاري التفكير...' : 'Thinking...'}</span></div>
-          ) : error ? (
-            <p className="text-sm font-bold text-amber-100">{error}</p>
-          ) : (
-            <p className="text-sm lg:text-base font-bold leading-relaxed">{insight || (lang === 'ar' ? 'جاري تحليل بياناتك...' : "Compiling behavioral patterns...")}</p>
-          )}
-        </div>
-        <button 
-          onClick={() => generateInsight(true)} 
-          disabled={loading}
-          className="bg-white/10 hover:bg-white/20 p-3 rounded-2xl transition-all active:rotate-180 duration-500 disabled:opacity-30"
-          title={lang === 'ar' ? 'تحديث الرؤى' : 'Refresh Insights'}
-        >
-          <RefreshCw className={`w-5 h-5 ${loading ? 'animate-spin' : ''}`} />
-        </button>
-      </div>
     </div>
   );
 };
@@ -546,11 +445,25 @@ const BudgetsView = ({ goals, transactions, formatMoney, lang, onAddClick, onEdi
       <div className="flex justify-between items-center"><h2 className="text-2xl font-black text-gray-900">{tStr.budgets}</h2><button onClick={onAddClick} className="text-blue-600 font-black text-sm uppercase tracking-widest">+{tStr.new_budget}</button></div>
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {goals.map((goal: BudgetGoal) => {
-          const spent = transactions.filter(tr => tr.category === goal.category).reduce((s, tr) => s + tr.amount, 0);
+          const spent = transactions
+            .filter(tr => tr.category === goal.category && new Date(tr.date) >= new Date(goal.startDate) && new Date(tr.date) <= new Date(goal.endDate))
+            .reduce((s, tr) => s + tr.amount, 0);
           const percent = Math.min((spent / goal.limit) * 100, 100);
           return (
             <div key={goal.id} className="bg-white p-8 rounded-[2.5rem] border border-gray-100 shadow-sm relative group hover:shadow-lg transition-all">
-              <div className="flex justify-between mb-6"><div className="flex items-center gap-4"><div className="p-3 bg-blue-50 text-blue-600 rounded-2xl">{CATEGORY_ICONS[goal.category]}</div><h3 className="font-bold text-gray-800">{(tStr.categories as any)[goal.category]}</h3></div><div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity"><button onClick={() => onEditClick(goal)} className="p-1.5 text-gray-300 hover:text-blue-500"><Edit2 className="w-4 h-4" /></button><button onClick={() => onDelete(goal.id)} className="p-1.5 text-gray-300 hover:text-rose-500"><Trash2 className="w-4 h-4" /></button></div></div>
+              <div className="flex justify-between mb-4">
+                <div className="flex items-center gap-4">
+                  <div className="p-3 bg-blue-50 text-blue-600 rounded-2xl">{CATEGORY_ICONS[goal.category]}</div>
+                  <div>
+                    <h3 className="font-bold text-gray-800">{(tStr.categories as any)[goal.category]}</h3>
+                    <p className="text-[10px] text-gray-400 font-bold uppercase">{goal.startDate} - {goal.endDate}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <button onClick={() => onEditClick(goal)} className="p-1.5 text-gray-300 hover:text-blue-500"><Edit2 className="w-4 h-4" /></button>
+                  <button onClick={() => onDelete(goal.id)} className="p-1.5 text-gray-300 hover:text-rose-500"><Trash2 className="w-4 h-4" /></button>
+                </div>
+              </div>
               <div className="w-full h-3 bg-gray-50 rounded-full overflow-hidden mb-3"><div className={`h-full transition-all duration-1000 ${percent > 90 ? 'bg-rose-500' : 'bg-blue-600'}`} style={{width: `${percent}%`}} /></div>
               <div className="flex justify-between text-[10px] font-black text-gray-400 uppercase tracking-widest"><span>{formatMoney(spent)}</span><span className={percent > 90 ? 'text-rose-500' : 'text-blue-600'}>{percent.toFixed(0)}%</span></div>
             </div>
@@ -603,8 +516,38 @@ const BudgetForm = ({ onAdd, onClose, lang, initialData }: any) => {
   const tStr = translations[lang];
   const [category, setCategory] = useState<Category>(initialData?.category || CATEGORIES[0]);
   const [limit, setLimit] = useState(initialData?.limit?.toString() || '');
+  const [startDate, setStartDate] = useState(initialData?.startDate || new Date().toISOString().split('T')[0]);
+  const [endDate, setEndDate] = useState(initialData?.endDate || new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0).toISOString().split('T')[0]);
+
   return (
-    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[110] p-4 animate-in fade-in duration-200"><div className="bg-white rounded-[2.5rem] p-8 w-full max-w-sm shadow-2xl animate-in zoom-in-95 duration-300"><h2 className="text-2xl font-black mb-8 text-gray-900">{initialData ? tStr.edit_budget : tStr.new_budget}</h2><div className="space-y-5"><select value={category} onChange={e => setCategory(e.target.value as Category)} className="w-full border border-gray-100 p-4 rounded-2xl bg-gray-50 outline-none font-bold text-sm focus:bg-white">{CATEGORIES.map(c => <option key={c} value={c}>{(tStr.categories as any)[c]}</option>)}</select><input type="number" value={limit} onChange={e => setLimit(e.target.value)} className="w-full border border-gray-100 p-4 rounded-2xl bg-gray-50 outline-none font-black text-lg focus:bg-white" placeholder="0.00" /><div className="flex gap-4 pt-6"><button onClick={onClose} className="flex-1 font-bold text-gray-400 hover:bg-gray-50 rounded-2xl">Cancel</button><button onClick={() => { if(!limit) return; onAdd({ ...initialData, category, limit: Number(limit) }); onClose(); }} className="flex-1 bg-blue-600 text-white p-4 rounded-2xl font-black uppercase text-xs shadow-xl shadow-blue-100 transition-all active:scale-95">{initialData ? tStr.update : tStr.save}</button></div></div></div></div>
+    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[110] p-4 animate-in fade-in duration-200">
+      <div className="bg-white rounded-[2.5rem] p-8 w-full max-w-sm shadow-2xl animate-in zoom-in-95 duration-300">
+        <h2 className="text-2xl font-black mb-6 text-gray-900">{initialData ? tStr.edit_budget : tStr.new_budget}</h2>
+        <div className="space-y-4">
+          <select value={category} onChange={e => setCategory(e.target.value as Category)} className="w-full border border-gray-100 p-4 rounded-2xl bg-gray-50 outline-none font-bold text-sm focus:bg-white transition-all">
+            {CATEGORIES.map(c => <option key={c} value={c}>{(tStr.categories as any)[c]}</option>)}
+          </select>
+          <div>
+            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-2 px-1">{tStr.amount}</label>
+            <input type="number" value={limit} onChange={e => setLimit(e.target.value)} className="w-full border border-gray-100 p-4 rounded-2xl bg-gray-50 outline-none font-black text-lg focus:bg-white transition-all" placeholder="0.00" />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-2 px-1">{tStr.start_date}</label>
+              <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="w-full border border-gray-100 p-4 rounded-2xl bg-gray-50 outline-none font-bold text-xs focus:bg-white" />
+            </div>
+            <div>
+              <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-2 px-1">{tStr.end_date}</label>
+              <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="w-full border border-gray-100 p-4 rounded-2xl bg-gray-50 outline-none font-bold text-xs focus:bg-white" />
+            </div>
+          </div>
+          <div className="flex gap-4 pt-6">
+            <button onClick={onClose} className="flex-1 font-bold text-gray-400 hover:bg-gray-50 rounded-2xl">Cancel</button>
+            <button onClick={() => { if(!limit) return; onAdd({ ...initialData, category, limit: Number(limit), startDate, endDate }); onClose(); }} className="flex-1 bg-blue-600 text-white p-4 rounded-2xl font-black uppercase text-xs shadow-xl shadow-blue-100 transition-all active:scale-95">{initialData ? tStr.update : tStr.save}</button>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 };
 

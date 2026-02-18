@@ -1,4 +1,3 @@
-
 import React from 'react';
 import { 
   Utensils, 
@@ -53,9 +52,12 @@ export const CATEGORY_ICONS: Record<Category, React.ReactNode> = {
   'Other': <MoreHorizontal className="w-5 h-5" />
 };
 
-// Fixed: Changed type to Omit<BudgetGoal, 'userId'>[] to allow templates without a userId property, as it is added dynamically in App.tsx
+const now = new Date();
+const firstDay = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
+const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0];
+
 export const INITIAL_GOALS: Omit<BudgetGoal, 'userId'>[] = [
-  { id: '1', category: 'Food & Dining', limit: 1500 },
-  { id: '2', category: 'Entertainment', limit: 800 },
-  { id: '3', category: 'Shopping', limit: 1000 },
+  { id: '1', category: 'Food & Dining', limit: 1500, startDate: firstDay, endDate: lastDay },
+  { id: '2', category: 'Entertainment', limit: 800, startDate: firstDay, endDate: lastDay },
+  { id: '3', category: 'Shopping', limit: 1000, startDate: firstDay, endDate: lastDay },
 ];

@@ -46,7 +46,6 @@ export interface Account {
   createdAt?: any;
 }
 
-// Fixed: Added isSettlement and targetAccountId properties to Transaction interface
 export interface Transaction {
   id: string;
   userId: string;
@@ -67,5 +66,7 @@ export interface BudgetGoal {
   userId: string;
   category: Category;
   limit: number;
+  startDate: string;
+  endDate: string;
   createdAt?: any;
 }

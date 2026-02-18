@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useRef } from 'react';
 import { CATEGORIES, MOODS } from '../constants';
 import { Transaction, Category, Mood, Account } from '../types';
-import { PlusCircle, X, ArrowDownRight, RefreshCw, Camera, Loader2, Sparkles, CheckCircle2 } from 'lucide-react';
+import { PlusCircle, X, ArrowDownRight, RefreshCw, Camera, Loader2, Sparkles, CheckCircle2, Info } from 'lucide-react';
 import { Language, translations } from '../translations';
 import { GoogleGenAI, Type } from "@google/genai";
 
@@ -59,13 +59,14 @@ const TransactionForm: React.FC<Props> = ({ accounts, initialData, onAdd, onUpda
               },
             },
             {
-              text: `Analyze this receipt. Extract the following details as JSON:
-              - amount: number
-              - date: string (YYYY-MM-DD)
-              - description: string (Short summary)
-              - category: string (Must be one of: ${CATEGORIES.join(', ')})
-              - mood: string (Guess mood based on items: Happy, Excited, Neutral, Tired, Stressed. Must be one of: ${MOODS.join(', ')})
-              Return ONLY the JSON object.`,
+              text: `Read this receipt carefully. Extract the financial data.
+              Output as a JSON object with these keys: 
+              - amount (as a number, the total paid)
+              - date (string YYYY-MM-DD)
+              - description (a concise 3-4 word merchant summary)
+              - category (pick best from: ${CATEGORIES.join(', ')})
+              - mood (pick best from: ${MOODS.join(', ')})
+              MANDATORY: Return ONLY raw JSON.`,
             },
           ],
           config: {
@@ -84,11 +85,12 @@ const TransactionForm: React.FC<Props> = ({ accounts, initialData, onAdd, onUpda
           }
         });
 
-        const result = JSON.parse(response.text || '{}');
+        const rawText = response.text || '{}';
+        const result = JSON.parse(rawText);
         
         if (result.amount) setAmount(result.amount.toString());
         if (result.description) setDescription(result.description);
-        if (result.date) setDate(result.date);
+        if (result.date && /^\d{4}-\d{2}-\d{2}$/.test(result.date)) setDate(result.date);
         if (result.category && CATEGORIES.includes(result.category)) setCategory(result.category as Category);
         if (result.mood && MOODS.includes(result.mood)) setMood(result.mood as Mood);
 
@@ -101,6 +103,8 @@ const TransactionForm: React.FC<Props> = ({ accounts, initialData, onAdd, onUpda
       setScanStatus('error');
     } finally {
       setScanning(false);
+      // Clear input so same file can be scanned twice if needed
+      if (fileInputRef.current) fileInputRef.current.value = '';
     }
   };
 
@@ -153,19 +157,25 @@ const TransactionForm: React.FC<Props> = ({ accounts, initialData, onAdd, onUpda
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
                 disabled={scanning}
-                className={`w-full group flex items-center justify-center gap-3 p-4 rounded-2xl border-2 border-dashed transition-all active:scale-95 ${scanStatus === 'success' ? 'bg-emerald-50 border-emerald-200 text-emerald-600' : 'bg-blue-50 border-blue-100 text-blue-600 hover:border-blue-300'}`}
+                className={`w-full group flex flex-col items-center justify-center gap-2 p-6 rounded-2xl border-2 border-dashed transition-all active:scale-95 ${scanStatus === 'success' ? 'bg-emerald-50 border-emerald-200 text-emerald-600' : 'bg-blue-50 border-blue-100 text-blue-600 hover:border-blue-300'}`}
               >
                 {scanning ? (
-                  <Loader2 className="w-5 h-5 animate-spin" />
+                  <Loader2 className="w-6 h-6 animate-spin" />
                 ) : scanStatus === 'success' ? (
-                  <CheckCircle2 className="w-5 h-5" />
+                  <CheckCircle2 className="w-6 h-6" />
                 ) : (
-                  <Camera className="w-5 h-5 group-hover:scale-110 transition-transform" />
+                  <Camera className="w-6 h-6 group-hover:scale-110 transition-transform" />
                 )}
-                <span className="text-xs font-black uppercase tracking-widest">
-                  {scanning ? tStrings.scanning : scanStatus === 'success' ? tStrings.scan_success : tStrings.scan_receipt}
-                </span>
-                {!scanning && scanStatus !== 'success' && <Sparkles className="w-4 h-4 text-blue-400 opacity-0 group-hover:opacity-100" />}
+                <div className="text-center">
+                  <span className="text-xs font-black uppercase tracking-widest block">
+                    {scanning ? tStrings.scanning : scanStatus === 'success' ? tStrings.scan_success : tStrings.scan_receipt}
+                  </span>
+                  {!scanning && scanStatus !== 'success' && (
+                    <span className="text-[10px] opacity-60 font-bold block mt-1">
+                      {lang === 'ar' ? 'قم بتصوير فاتورتك لاستخراج البيانات تلقائياً' : 'Snap a photo to fill details automatically'}
+                    </span>
+                  )}
+                </div>
               </button>
             </div>
           )}

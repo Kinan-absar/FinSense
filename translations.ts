@@ -81,6 +81,8 @@ export const translations = {
     scanning: 'Scanning...',
     scan_success: 'Data extracted!',
     scan_error: 'Could not read receipt.',
+    start_date: 'Start Date',
+    end_date: 'End Date',
     categories: {
       'Food & Dining': 'Food & Dining',
       'Transportation': 'Transportation',
@@ -188,6 +190,8 @@ export const translations = {
     scanning: 'جاري المسح...',
     scan_success: 'تم استخراج البيانات!',
     scan_error: 'تعذر قراءة الفاتورة.',
+    start_date: 'تاريخ البدء',
+    end_date: 'تاريخ الانتهاء',
     categories: {
       'Food & Dining': 'مطاعم وطعام',
       'Transportation': 'مواصلات',
