@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useRef } from 'react';
 import { CATEGORIES, MOODS } from '../constants';
 import { Transaction, Category, Mood, Account } from '../types';
-import { PlusCircle, X, ArrowDownRight, RefreshCw, Camera, Loader2, Sparkles, CheckCircle2, Info } from 'lucide-react';
+import { PlusCircle, X, ArrowDownRight, RefreshCw, Camera, Loader2, Sparkles, CheckCircle2, AlertCircle, Lightbulb } from 'lucide-react';
 import { Language, translations } from '../translations';
 import { GoogleGenAI, Type } from "@google/genai";
 
@@ -59,14 +59,16 @@ const TransactionForm: React.FC<Props> = ({ accounts, initialData, onAdd, onUpda
               },
             },
             {
-              text: `Read this receipt carefully. Extract the financial data.
-              Output as a JSON object with these keys: 
-              - amount (as a number, the total paid)
-              - date (string YYYY-MM-DD)
-              - description (a concise 3-4 word merchant summary)
-              - category (pick best from: ${CATEGORIES.join(', ')})
-              - mood (pick best from: ${MOODS.join(', ')})
-              MANDATORY: Return ONLY raw JSON.`,
+              text: `You are a financial accounting expert. Your task is to extract high-accuracy transaction data from the provided image of a receipt, invoice, or bill.
+              
+              Rules:
+              1. **Grand Total**: Identify the final amount paid. Ignore sub-totals or tax breakdowns. Look for keywords like "Total", "Balance Due", "Net", or "Amount".
+              2. **Merchant Name**: Look at the top of the image for the vendor/business name.
+              3. **Date**: Extract the purchase date in YYYY-MM-DD format. If not found, use today's date (${new Date().toISOString().split('T')[0]}).
+              4. **Category**: Match the merchant or items to the most logical category from this specific list: [${CATEGORIES.join(', ')}].
+              5. **Mood**: Based on the purchase type (e.g., luxury=Excited, bill=Stressed, food=Happy), choose one from: [${MOODS.join(', ')}].
+              
+              Output your findings ONLY as a pure JSON object. No markdown, no explanations.`,
             },
           ],
           config: {
@@ -74,11 +76,11 @@ const TransactionForm: React.FC<Props> = ({ accounts, initialData, onAdd, onUpda
             responseSchema: {
               type: Type.OBJECT,
               properties: {
-                amount: { type: Type.NUMBER },
-                date: { type: Type.STRING },
-                description: { type: Type.STRING },
-                category: { type: Type.STRING },
-                mood: { type: Type.STRING }
+                amount: { type: Type.NUMBER, description: "The final total amount shown on the receipt" },
+                date: { type: Type.STRING, description: "Date in YYYY-MM-DD format" },
+                description: { type: Type.STRING, description: "Merchant or store name" },
+                category: { type: Type.STRING, description: "One of the provided category names" },
+                mood: { type: Type.STRING, description: "One of the provided mood types" }
               },
               required: ["amount", "description"]
             }
@@ -91,19 +93,25 @@ const TransactionForm: React.FC<Props> = ({ accounts, initialData, onAdd, onUpda
         if (result.amount) setAmount(result.amount.toString());
         if (result.description) setDescription(result.description);
         if (result.date && /^\d{4}-\d{2}-\d{2}$/.test(result.date)) setDate(result.date);
-        if (result.category && CATEGORIES.includes(result.category)) setCategory(result.category as Category);
-        if (result.mood && MOODS.includes(result.mood)) setMood(result.mood as Mood);
+        
+        // Ensure category matches valid options
+        if (result.category && CATEGORIES.includes(result.category)) {
+          setCategory(result.category as Category);
+        }
+        
+        if (result.mood && MOODS.includes(result.mood)) {
+          setMood(result.mood as Mood);
+        }
 
         setScanStatus('success');
         setTimeout(() => setScanStatus('idle'), 3000);
       };
       reader.readAsDataURL(file);
     } catch (err) {
-      console.error("Scan error:", err);
+      console.error("OCR Scan error:", err);
       setScanStatus('error');
     } finally {
       setScanning(false);
-      // Clear input so same file can be scanned twice if needed
       if (fileInputRef.current) fileInputRef.current.value = '';
     }
   };
@@ -113,15 +121,16 @@ const TransactionForm: React.FC<Props> = ({ accounts, initialData, onAdd, onUpda
     if (!amount || isNaN(Number(amount))) return;
     if (isSettlement && !targetAccountId) return;
 
-    const transactionData: any = {
+    // Construct a plain object to avoid circular references
+    const transactionData = {
       amount: Number(amount),
       category: isSettlement ? 'Settlement' : category,
       description: isSettlement ? (description.startsWith(tStrings.is_settlement) ? description : `${tStrings.is_settlement}: ${description}`) : description,
-      mood,
-      date,
-      time,
-      accountId,
-      isSettlement,
+      mood: mood,
+      date: date,
+      time: time,
+      accountId: accountId,
+      isSettlement: isSettlement,
       targetAccountId: isSettlement ? targetAccountId : null,
     };
 
@@ -131,7 +140,7 @@ const TransactionForm: React.FC<Props> = ({ accounts, initialData, onAdd, onUpda
       onAdd({
         ...transactionData,
         id: Math.random().toString(36).substr(2, 9),
-      });
+      } as any);
     }
     onClose();
   };
@@ -149,34 +158,48 @@ const TransactionForm: React.FC<Props> = ({ accounts, initialData, onAdd, onUpda
         </div>
         
         <form onSubmit={handleSubmit} className="p-6 space-y-4 max-h-[80vh] overflow-y-auto custom-scrollbar">
-          {/* AI OCR Button */}
+          {/* AI OCR Section */}
           {!isEditing && !isSettlement && (
-            <div className="mb-2">
+            <div className="space-y-3">
               <input type="file" accept="image/*" className="hidden" ref={fileInputRef} onChange={handleScanReceipt} />
               <button 
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
                 disabled={scanning}
-                className={`w-full group flex flex-col items-center justify-center gap-2 p-6 rounded-2xl border-2 border-dashed transition-all active:scale-95 ${scanStatus === 'success' ? 'bg-emerald-50 border-emerald-200 text-emerald-600' : 'bg-blue-50 border-blue-100 text-blue-600 hover:border-blue-300'}`}
+                className={`w-full group flex flex-col items-center justify-center gap-2 p-6 rounded-2xl border-2 border-dashed transition-all active:scale-95 ${scanStatus === 'success' ? 'bg-emerald-50 border-emerald-200 text-emerald-600' : scanStatus === 'error' ? 'bg-rose-50 border-rose-100 text-rose-600' : 'bg-blue-50 border-blue-100 text-blue-600 hover:border-blue-300'}`}
               >
                 {scanning ? (
-                  <Loader2 className="w-6 h-6 animate-spin" />
+                  <Loader2 className="w-8 h-8 animate-spin" />
                 ) : scanStatus === 'success' ? (
-                  <CheckCircle2 className="w-6 h-6" />
+                  <CheckCircle2 className="w-8 h-8 animate-bounce" />
+                ) : scanStatus === 'error' ? (
+                  <AlertCircle className="w-8 h-8" />
                 ) : (
-                  <Camera className="w-6 h-6 group-hover:scale-110 transition-transform" />
+                  <Camera className="w-8 h-8 group-hover:scale-110 transition-transform" />
                 )}
                 <div className="text-center">
-                  <span className="text-xs font-black uppercase tracking-widest block">
-                    {scanning ? tStrings.scanning : scanStatus === 'success' ? tStrings.scan_success : tStrings.scan_receipt}
+                  <span className="text-sm font-black uppercase tracking-widest block">
+                    {scanning ? tStrings.scanning : scanStatus === 'success' ? tStrings.scan_success : scanStatus === 'error' ? tStrings.scan_error : tStrings.scan_receipt}
                   </span>
-                  {!scanning && scanStatus !== 'success' && (
+                  {!scanning && scanStatus === 'idle' && (
                     <span className="text-[10px] opacity-60 font-bold block mt-1">
-                      {lang === 'ar' ? 'قم بتصوير فاتورتك لاستخراج البيانات تلقائياً' : 'Snap a photo to fill details automatically'}
+                      {lang === 'ar' ? 'صور الفاتورة لاستخراج البيانات بدقة' : 'High-precision scanning for receipts and invoices'}
                     </span>
                   )}
                 </div>
               </button>
+
+              {/* Scanning Tips */}
+              {!scanning && scanStatus === 'idle' && (
+                <div className="bg-blue-50/30 p-4 rounded-xl flex gap-3 border border-blue-100/50">
+                   <Lightbulb className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
+                   <p className="text-[10px] font-bold text-gray-500 leading-relaxed">
+                     {lang === 'ar' 
+                        ? 'نصيحة: تأكد من أن الفاتورة مفرودة وإضاءة المكان جيدة للحصول على أفضل النتائج.' 
+                        : 'Tip: Ensure the receipt is flat and well-lit for the best extraction accuracy.'}
+                   </p>
+                </div>
+              )}
             </div>
           )}
 

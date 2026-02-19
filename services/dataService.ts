@@ -13,32 +13,41 @@ import {
 import { db } from "../firebase";
 import { Transaction, BudgetGoal, Account, UserSettings, UserProfile } from "../types";
 
-const cleanObject = (obj: any) => {
-  if (!obj || typeof obj !== 'object') return obj;
-  const newObj: any = Array.isArray(obj) ? [] : {};
-  
-  Object.keys(obj).forEach(key => {
-    const val = obj[key];
-    // Exclude undefined and complex circular parts if any
-    if (val === undefined) return;
-    
-    // Primitive or simple object
-    if (val === null || typeof val !== 'object') {
-      newObj[key] = val;
-    } else if (val.nanoseconds !== undefined && val.seconds !== undefined) {
-      // Keep Firestore timestamps as is
-      newObj[key] = val;
-    } else {
-      // Basic plain object or array
-      try {
-        newObj[key] = JSON.parse(JSON.stringify(val));
-      } catch (e) {
-        // Fallback for non-serializable parts
-        newObj[key] = null;
+/**
+ * Deeply cleans an object to ensure it only contains primitives and plain objects.
+ * This prevents "Circular Structure" errors by stripping out any complex class instances
+ * or hidden internal properties before sending to Firestore or JSON.stringify.
+ */
+const cleanObject = (obj: any): any => {
+  if (obj === null || obj === undefined) return null;
+  if (typeof obj !== 'object') return obj;
+
+  if (Array.isArray(obj)) {
+    return obj.map(v => cleanObject(v));
+  }
+
+  // If it's a date or timestamp, we usually want to keep it or convert to string
+  if (obj instanceof Date) return obj.toISOString();
+
+  const cleaned: any = {};
+  for (const key in obj) {
+    if (Object.prototype.hasOwnProperty.call(obj, key)) {
+      const val = obj[key];
+      // Skip undefined values
+      if (val === undefined) continue;
+      // Skip complex objects like React elements or Firestore internal instances
+      if (val && val.constructor && !['Object', 'Array', 'Date', 'Number', 'String', 'Boolean'].includes(val.constructor.name)) {
+        if (val.seconds !== undefined) { // Specifically allow Firestore Timestamps
+          cleaned[key] = val;
+        } else {
+          continue; 
+        }
+      } else {
+        cleaned[key] = cleanObject(val);
       }
     }
-  });
-  return newObj;
+  }
+  return cleaned;
 };
 
 export const dataService = {
@@ -95,13 +104,13 @@ export const dataService = {
 
   addTransaction: async (userId: string, transaction: Omit<Transaction, 'id' | 'userId'>) => {
     if (!userId) return;
-    return addDoc(collection(db, "users", userId, "transactions"), cleanObject({ ...transaction, userId, createdAt: serverTimestamp() }));
+    return addDoc(collection(db, "users", userId, "transactions"), { ...cleanObject(transaction), userId, createdAt: serverTimestamp() });
   },
 
   updateTransaction: async (userId: string, transactionId: string, transaction: Partial<Transaction>) => {
     if (!userId || !transactionId) return;
     const docRef = doc(db, "users", userId, "transactions", transactionId);
-    return updateDoc(docRef, cleanObject({ ...transaction, updatedAt: serverTimestamp() }));
+    return updateDoc(docRef, { ...cleanObject(transaction), updatedAt: serverTimestamp() });
   },
 
   deleteTransaction: async (userId: string, transactionId: string) => {
