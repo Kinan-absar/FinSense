@@ -8,6 +8,7 @@ import {
   setDoc, 
   updateDoc,
   getDoc,
+  getDocs,
   serverTimestamp 
 } from "firebase/firestore";
 import { db } from "../firebase";
@@ -152,6 +153,13 @@ export const dataService = {
   updateAccountBalance: async (userId: string, accountId: string, newBalance: number) => {
     if (!userId || !accountId) return;
     return updateDoc(doc(db, "users", userId, "accounts", accountId), { balance: newBalance });
+  },
+
+  getAccounts: async (userId: string): Promise<Account[]> => {
+    if (!userId) return [];
+    const q = query(collection(db, "users", userId, "accounts"));
+    const snapshot = await getDocs(q);
+    return snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id })) as Account[];
   },
 
   deleteAccount: async (userId: string, accountId: string) => {

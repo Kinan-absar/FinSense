@@ -1,25 +1,31 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { onAuthStateChanged, User, signOut } from 'firebase/auth';
 import { auth } from './firebase';
 import { dataService } from './services/dataService';
 import { Transaction, BudgetGoal, Currency, Account, Category, AccountType, UserSettings, UserProfile, ViewType } from './types';
-import { INITIAL_GOALS, CATEGORY_ICONS, CURRENCIES, CATEGORIES } from './constants';
+import { INITIAL_GOALS, CURRENCIES } from './constants';
 import TransactionForm from './components/TransactionForm';
-import TransactionList from './components/TransactionList';
-import Charts from './components/Charts';
 import AuthScreen from './components/AuthScreen';
 import ConfirmModal from './components/ConfirmModal';
-import { Language, translations } from './translations';
-import { 
-  Wallet, Plus, LayoutDashboard, History, Target, CreditCard, 
-  TrendingUp, TrendingDown, LogOut, Loader2, Globe, Trash2, Clock, Edit2, User as UserIcon, FileText, Camera, ShieldAlert, Printer, Calendar
-} from 'lucide-react';
+import Sidebar from './components/Sidebar';
+import Navbar from './components/Navbar';
+import Dashboard from './components/Dashboard';
+import History from './components/History';
+import Analytics from './components/Analytics';
+import Budgets from './components/Budgets';
+import Accounts from './components/Accounts';
+import Profile from './components/Profile';
+import Statement from './components/Statement';
+import MobileMenu from './components/MobileMenu';
+import { translations, Language } from './translations';
+import { Loader2, Trash2 } from 'lucide-react';
 
 const App: React.FC = () => {
   const [activeView, setActiveView] = useState<ViewType>('dashboard');
   const [user, setUser] = useState<User | null>(null);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const [lang, setLang] = useState<Language>('en');
   const [currency, setCurrency] = useState<Currency>(CURRENCIES[0]);
@@ -30,6 +36,11 @@ const App: React.FC = () => {
   const [editingAccount, setEditingAccount] = useState<Account | null>(null);
   const [showBudgetForm, setShowBudgetForm] = useState(false);
   const [showAccountForm, setShowAccountForm] = useState(false);
+  const [accountType, setAccountType] = useState<AccountType>('Checking');
+  const [budgetItems, setBudgetItems] = useState<{ id: string; name: string; cost: number; completed?: boolean }[]>([]);
+  const [limitInputVal, setLimitInputVal] = useState('');
+  const [newSubItemName, setNewSubItemName] = useState('');
+  const [newSubItemCost, setNewSubItemCost] = useState('');
 
   const [confirmDelete, setConfirmDelete] = useState<{
     id: string;
@@ -74,22 +85,14 @@ const App: React.FC = () => {
 
     const unsubG = dataService.subscribe(user.uid, 'budgets', (data: BudgetGoal[]) => {
       if (data.length === 0) {
-        INITIAL_GOALS.forEach(g => dataService.saveGoal(user.uid, { ...g, userId: user.uid } as any));
+        // Only initial load
       } else {
         setGoals(data);
       }
     });
 
     const unsubA = dataService.subscribe(user.uid, 'accounts', (data: Account[]) => {
-      if (data.length === 0) {
-        const defaults = [
-          { name: 'Cash Wallet', type: 'Cash' as AccountType, balance: 1000 },
-          { name: 'Primary Bank', type: 'Checking' as AccountType, balance: 5000 }
-        ];
-        defaults.forEach(acc => dataService.saveAccount(user.uid, { ...acc, userId: user.uid } as any));
-      } else {
-        setAccounts(data);
-      }
+       setAccounts(data);
     });
 
     return () => {
@@ -121,36 +124,89 @@ const App: React.FC = () => {
 
   const t = translations[lang];
 
-  const formatMoney = (amount: number) => {
-    return `${currency.symbol} ${amount.toLocaleString(lang, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const formatMoney = useCallback((amount: number) => {
+    return `${currency.symbol} ${Math.abs(amount).toLocaleString(lang, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  }, [currency, lang]);
+
+  const handleAddTransaction = async (tData: any) => {
+    if (!user) return;
+    
+    // Update account balance
+    const sourceAcc = accounts.find(a => a.id === tData.accountId);
+    if (sourceAcc) {
+      const balanceChange = tData.type === 'income' ? tData.amount : -tData.amount;
+      await dataService.updateAccountBalance(user.uid, sourceAcc.id, sourceAcc.balance + balanceChange);
+    }
+
+    if (tData.isSettlement && tData.targetAccountId) {
+      const targetAcc = accounts.find(a => a.id === tData.targetAccountId);
+      if (targetAcc) await dataService.updateAccountBalance(user.uid, targetAcc.id, targetAcc.balance + tData.amount);
+    }
+    
+    await dataService.addTransaction(user.uid, tData);
   };
 
-  const totalAssets = useMemo(() => 
-    accounts
-      .filter(acc => acc.type !== 'Credit Card')
-      .reduce((acc, curr) => acc + curr.balance, 0), 
-    [accounts]
-  );
-  
-  const totalDebt = useMemo(() => 
-    accounts
-      .filter(acc => acc.type === 'Credit Card')
-      .reduce((acc, curr) => {
-        const limit = curr.creditLimit || 0;
-        return acc + Math.max(0, limit - curr.balance);
-      }, 0), 
-    [accounts]
-  );
+  const handleUpdateTransaction = async (id: string, newData: any) => {
+    if (!user) return;
+    const oldT = transactions.find(t => t.id === id);
+    if (!oldT) return;
 
-  const totalExpenses = useMemo(() => {
-    const now = new Date();
-    return transactions
-      .filter(tr => {
-        const d = new Date(tr.date);
-        return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear() && !tr.isSettlement;
-      })
-      .reduce((acc, curr) => acc + curr.amount, 0);
-  }, [transactions]);
+    // 1. Reverse old impact
+    const oldSource = accounts.find(a => a.id === oldT.accountId);
+    if (oldSource) {
+      const oldBalanceChange = oldT.type === 'income' ? -oldT.amount : oldT.amount;
+      await dataService.updateAccountBalance(user.uid, oldSource.id, oldSource.balance + oldBalanceChange);
+    }
+    if (oldT.isSettlement && oldT.targetAccountId) {
+      const oldTarget = accounts.find(a => a.id === oldT.targetAccountId);
+      if (oldTarget) await dataService.updateAccountBalance(user.uid, oldTarget.id, oldTarget.balance - oldT.amount);
+    }
+
+    // Since onSnapshot is async, we re-fetch briefly or calculate based on assumed reversed state
+    const currentAccounts = await dataService.getAccounts(user.uid);
+    const newSource = currentAccounts.find(a => a.id === newData.accountId);
+    if (newSource) {
+      const newBalanceChange = newData.type === 'income' ? newData.amount : -newData.amount;
+      await dataService.updateAccountBalance(user.uid, newSource.id, newSource.balance + newBalanceChange);
+    }
+
+    if (newData.isSettlement && newData.targetAccountId) {
+      const newTarget = currentAccounts.find(a => a.id === newData.targetAccountId);
+      if (newTarget) {
+        await dataService.updateAccountBalance(user.uid, newTarget.id, newTarget.balance + newData.amount);
+      }
+    }
+
+    await dataService.updateTransaction(user.uid, id, newData);
+  };
+
+  const handleDeleteTransaction = async (id: string) => {
+    if (!user) return;
+    const tToDelete = transactions.find(t => t.id === id);
+    if (tToDelete) {
+      const acc = accounts.find(a => a.id === tToDelete.accountId);
+      if (acc) {
+        const reversal = tToDelete.type === 'income' ? -tToDelete.amount : tToDelete.amount;
+        await dataService.updateAccountBalance(user.uid, acc.id, acc.balance + reversal);
+      }
+      if (tToDelete.isSettlement && tToDelete.targetAccountId) {
+        const target = accounts.find(a => a.id === tToDelete.targetAccountId);
+        if (target) await dataService.updateAccountBalance(user.uid, target.id, target.balance - tToDelete.amount);
+      }
+    }
+    await dataService.deleteTransaction(user.uid, id);
+    setConfirmDelete(null);
+  };
+
+  const handleToggleBudgetItem = async (goalId: string, itemId: string) => {
+    if (!user) return;
+    const goal = goals.find(g => g.id === goalId);
+    if (!goal || !goal.items) return;
+    const updatedItems = goal.items.map(item => 
+      item.id === itemId ? { ...item, completed: !item.completed } : item
+    );
+    await dataService.saveGoal(user.uid, { ...goal, items: updatedItems });
+  };
 
   const userName = useMemo(() => {
     if (userProfile?.name) return userProfile.name;
@@ -160,432 +216,371 @@ const App: React.FC = () => {
     return emailStr || 'User';
   }, [user, userProfile]);
 
-  const handleAddTransaction = async (tData: any) => {
-    if (!user) return;
-    const sourceAcc = accounts.find(a => a.id === tData.accountId);
-    if (sourceAcc) await dataService.updateAccountBalance(user.uid, sourceAcc.id, sourceAcc.balance - tData.amount);
-    if (tData.isSettlement && tData.targetAccountId) {
-      const targetAcc = accounts.find(a => a.id === tData.targetAccountId);
-      if (targetAcc) await dataService.updateAccountBalance(user.uid, targetAcc.id, targetAcc.balance + tData.amount);
-    }
-    await dataService.addTransaction(user.uid, tData);
-  };
+  if (authLoading) {
+    return (
+      <div className="h-screen w-full flex flex-col items-center justify-center bg-slate-50 gap-4">
+        <Loader2 className="w-12 h-12 text-blue-600 animate-spin" />
+        <p className="text-slate-400 font-bold uppercase tracking-widest text-xs">FinSense Loading...</p>
+      </div>
+    );
+  }
 
-  const handleUpdateTransaction = async (id: string, newData: any) => {
-    if (!user) return;
-    const oldT = transactions.find(t => t.id === id);
-    if (!oldT) return;
-    const oldSource = accounts.find(a => a.id === oldT.accountId);
-    if (oldSource) await dataService.updateAccountBalance(user.uid, oldSource.id, oldSource.balance + oldT.amount);
-    if (oldT.isSettlement && oldT.targetAccountId) {
-      const oldTarget = accounts.find(a => a.id === oldT.targetAccountId);
-      if (oldTarget) await dataService.updateAccountBalance(user.uid, oldTarget.id, oldTarget.balance - oldT.amount);
-    }
-    const newSource = accounts.find(a => a.id === newData.accountId);
-    if (newSource) {
-      const currentBal = newSource.balance + (newSource.id === oldT.accountId ? oldT.amount : 0);
-      await dataService.updateAccountBalance(user.uid, newSource.id, currentBal - newData.amount);
-    }
-    if (newData.isSettlement && newData.targetAccountId) {
-      const newTarget = accounts.find(a => a.id === newData.targetAccountId);
-      if (newTarget) {
-        const currentBal = newTarget.balance - (newTarget.id === oldT.targetAccountId ? oldT.amount : 0);
-        await dataService.updateAccountBalance(user.uid, newTarget.id, currentBal + newData.amount);
-      }
-    }
-    await dataService.updateTransaction(user.uid, id, newData);
-  };
+  if (!user) return <AuthScreen lang={lang} t={t} />;
 
-  const handleDeleteTransaction = (id: string) => {
-    setConfirmDelete({
-      id,
-      type: 'transaction',
-      message: lang === 'ar' ? 'هل أنت متأكد من حذف هذه المعاملة؟' : 'Are you sure you want to delete this transaction?'
-    });
-  };
-
-  const handleConfirmDelete = async () => {
-    if (!user || !confirmDelete) return;
-    try {
-      if (confirmDelete.type === 'transaction') {
-        const t = transactions.find(x => x.id === confirmDelete.id);
-        if (t) {
-          const s = accounts.find(a => a.id === t.accountId);
-          if (s) await dataService.updateAccountBalance(user.uid, s.id, s.balance + t.amount);
-          if (t.isSettlement && t.targetAccountId) {
-            const tr = accounts.find(a => a.id === t.targetAccountId);
-            if (tr) await dataService.updateAccountBalance(user.uid, tr.id, tr.balance - t.amount);
-          }
-          await dataService.deleteTransaction(user.uid, confirmDelete.id);
-        }
-      } else if (confirmDelete.type === 'budget') await dataService.deleteGoal(user.uid, confirmDelete.id);
-      else if (confirmDelete.type === 'account') await dataService.deleteAccount(user.uid, confirmDelete.id);
-    } finally {
-      setConfirmDelete(null);
+  const renderView = () => {
+    switch (activeView) {
+      case 'dashboard':
+        return <Dashboard 
+          transactions={transactions} 
+          accounts={accounts} 
+          goals={goals} 
+          currency={currency} 
+          lang={lang} 
+          t={t} 
+          formatMoney={formatMoney} 
+          setActiveView={setActiveView}
+        />;
+      case 'history':
+        return <History 
+          transactions={transactions} 
+          onDelete={(id) => setConfirmDelete({ id, type: 'transaction', message: t.confirm_delete_desc })} 
+          onEdit={(tr) => { setEditingTransaction(tr); setShowForm(true); }}
+          lang={lang} 
+          currencySymbol={currency.symbol}
+          t={t}
+        />;
+      case 'analytics':
+        return <Analytics 
+          transactions={transactions} 
+          goals={goals} 
+          currency={currency} 
+          lang={lang} 
+          t={t} 
+        />;
+      case 'budgets':
+        return <Budgets 
+          goals={goals} 
+          transactions={transactions} 
+          onAdd={() => { setEditingBudget(null); setBudgetItems([]); setLimitInputVal(''); setShowBudgetForm(true); }}
+          onEdit={(g) => { setEditingBudget(g); setBudgetItems(g.items || []); setLimitInputVal(g.limit.toString()); setShowBudgetForm(true); }}
+          onDelete={(id) => setConfirmDelete({ id, type: 'budget', message: t.confirm_delete_desc })}
+          onToggleItem={handleToggleBudgetItem}
+          lang={lang}
+          formatMoney={formatMoney}
+          t={t}
+        />;
+      case 'accounts':
+        return <Accounts 
+          accounts={accounts} 
+          onAdd={() => { setEditingAccount(null); setAccountType('Checking'); setShowAccountForm(true); }}
+          onEdit={(acc) => { setEditingAccount(acc); setAccountType(acc.type); setShowAccountForm(true); }}
+          onDelete={(id) => setConfirmDelete({ id, type: 'account', message: t.confirm_delete_desc })}
+          lang={lang}
+          formatMoney={formatMoney}
+          t={t}
+        />;
+      case 'profile':
+        return <Profile 
+          profile={userProfile} 
+          onUpdate={(data) => dataService.updateUserProfile(user.uid, data)}
+          onSignOut={() => signOut(auth)}
+          lang={lang}
+          t={t}
+        />;
+      case 'statement':
+        return <Statement 
+          transactions={transactions} 
+          accounts={accounts} 
+          currency={currency} 
+          lang={lang} 
+          formatMoney={formatMoney} 
+          t={t} 
+        />;
+      default:
+        return <Dashboard 
+          transactions={transactions} 
+          accounts={accounts} 
+          goals={goals} 
+          currency={currency} 
+          lang={lang} 
+          t={t} 
+          formatMoney={formatMoney} 
+          setActiveView={setActiveView}
+        />;
     }
   };
-
-  if (authLoading) return <div className="min-h-screen flex flex-col items-center justify-center bg-[#f8fafc]"><Loader2 className="w-10 h-10 text-blue-600 animate-spin mb-4" /><p className="text-gray-400 font-bold uppercase tracking-widest text-[10px]">Verifying Identity...</p></div>;
-  if (!user) return <AuthScreen lang={lang} onLanguageToggle={() => updateLanguage(lang === 'en' ? 'ar' : 'en')} />;
 
   return (
-    <div className="min-h-screen pb-24 lg:pb-0 bg-[#f8fafc]" dir={lang === 'ar' ? 'rtl' : 'ltr'}>
-      <nav className={`fixed ${lang === 'ar' ? 'right-0' : 'left-0'} top-0 h-full w-64 bg-white border-${lang === 'ar' ? 'l' : 'r'} border-gray-100 p-6 hidden lg:flex flex-col z-30`}>
-        <div className="flex items-center gap-3 mb-12">
-          <div className="w-10 h-10 bg-blue-600 rounded-2xl flex items-center justify-center text-white shadow-xl shadow-blue-100"><Wallet className="w-6 h-6" /></div>
-          <span className="text-xl font-black bg-clip-text text-transparent bg-gradient-to-r from-blue-600 to-indigo-700 tracking-tight">FinSense</span>
-        </div>
-        <div className="space-y-2 overflow-y-auto max-h-[70vh] custom-scrollbar pr-2">
-          <NavLink icon={<LayoutDashboard className="w-5 h-5" />} label={t.overview} active={activeView === 'dashboard'} onClick={() => setActiveView('dashboard')} />
-          <NavLink icon={<History className="w-5 h-5" />} label={t.history} active={activeView === 'history'} onClick={() => setActiveView('history')} />
-          <NavLink icon={<Target className="w-5 h-5" />} label={t.budgets} active={activeView === 'budgets'} onClick={() => setActiveView('budgets')} />
-          <NavLink icon={<CreditCard className="w-5 h-5" />} label={t.accounts} active={activeView === 'accounts'} onClick={() => setActiveView('accounts')} />
-          <NavLink icon={<FileText className="w-5 h-5" />} label={t.statement} active={activeView === 'statement'} onClick={() => setActiveView('statement')} />
-          <NavLink icon={<UserIcon className="w-5 h-5" />} label={t.profile} active={activeView === 'profile'} onClick={() => setActiveView('profile')} />
-        </div>
-        <div className="mt-auto space-y-4">
-           {userProfile?.photoURL ? (
-             <div className="px-5 py-2 flex items-center gap-3">
-                <img src={userProfile.photoURL} alt="Profile" className="w-10 h-10 rounded-xl object-cover border border-gray-100 shadow-sm" />
-                <div><p className="text-xs font-black text-gray-900 truncate max-w-[120px]">{userName}</p><p className="text-[10px] font-bold text-gray-400 truncate max-w-[120px]">{userProfile.email}</p></div>
-             </div>
-           ) : (
-              <div className="px-5 py-2 flex items-center gap-3">
-                <div className="w-10 h-10 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center text-sm font-black border border-blue-100 uppercase">{userName.charAt(0)}</div>
-                <div><p className="text-xs font-black text-gray-900 truncate max-w-[120px]">{userName}</p><p className="text-[10px] font-bold text-gray-400 truncate max-w-[120px]">{userProfile?.email || user.email}</p></div>
-              </div>
-           )}
-           <button onClick={() => signOut(auth)} className="w-full flex items-center gap-4 px-5 py-3.5 rounded-2xl text-sm font-bold text-rose-500 hover:bg-rose-50 transition-all mb-4"><LogOut className="w-5 h-5" /> {lang === 'ar' ? 'خروج' : 'Logout'}</button>
-           <div className="p-4 bg-blue-50/50 rounded-2xl border border-blue-100"><div className="flex gap-1 bg-white p-1 rounded-xl shadow-sm"><button onClick={() => updateLanguage('en')} className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${lang === 'en' ? 'bg-blue-600 text-white' : 'text-gray-400'}`}>EN</button><button onClick={() => updateLanguage('ar')} className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${lang === 'ar' ? 'bg-blue-600 text-white' : 'text-gray-400'}`}>AR</button></div></div>
-        </div>
-      </nav>
+    <div className="flex min-h-screen bg-slate-50 font-sans" dir={lang === 'ar' ? 'rtl' : 'ltr'}>
+      <Sidebar activeView={activeView} setActiveView={setActiveView} lang={lang} t={t} onSignOut={() => signOut(auth)} />
 
-      <main className={`${lang === 'ar' ? 'lg:mr-64' : 'lg:ml-64'} p-4 lg:p-10 max-w-7xl mx-auto min-h-screen`}>
-        <header className="flex justify-between items-center lg:items-start mb-6 lg:mb-10">
-          <div>
-            <h1 className="text-xl lg:text-3xl font-black text-gray-900 tracking-tight flex items-center gap-2">
-              {activeView === 'dashboard' ? (
-                <>
-                  <span className="lg:inline hidden">{t.welcome_back}, {userName}</span>
-                  <span className="lg:hidden inline">{lang === 'ar' ? 'أهلاً' : 'Hi'}, {userName}</span>
-                </>
-              ) : (t as any)[activeView] || t.overview}
-            </h1>
-          </div>
-          <div className="flex items-center gap-2 lg:gap-3">
-             {activeView === 'dashboard' && (
-                <div className="lg:hidden flex-shrink-0">
-                   {userProfile?.photoURL ? <img src={userProfile.photoURL} alt="Profile" className="w-9 h-9 rounded-xl object-cover border border-white shadow-sm" /> : <div className="w-9 h-9 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center text-xs font-black border border-blue-100 uppercase">{userName.charAt(0)}</div>}
-                </div>
-             )}
-             <button onClick={() => { setEditingTransaction(null); setShowForm(true); }} className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 lg:px-6 py-2.5 lg:py-3.5 rounded-xl lg:rounded-2xl font-black shadow-lg lg:shadow-xl shadow-blue-100 active:scale-95 transition-all text-[10px] lg:text-sm"><Plus className="w-3.5 h-3.5 lg:w-5 lg:h-5" /> <span className="uppercase tracking-widest">{t.entry}</span></button>
-          </div>
-        </header>
+      <MobileMenu 
+        isOpen={mobileMenuOpen} 
+        onClose={() => setMobileMenuOpen(false)}
+        activeView={activeView}
+        setActiveView={setActiveView}
+        lang={lang}
+        updateLanguage={updateLanguage}
+        currency={currency}
+        updateCurrencyByCode={updateCurrencyByCode}
+        t={t}
+        onSignOut={() => signOut(auth)}
+        userName={userName}
+      />
 
-        {activeView === 'dashboard' && (
-          <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 space-y-8">
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 lg:gap-6">
-              <StatCard title={t.total_assets} value={formatMoney(totalAssets)} trend={t.trend_liquid} trendType="up" icon={<TrendingUp className="w-4 h-4 lg:w-5 lg:h-5" />} lang={lang} onClick={() => setActiveView('accounts')} />
-              <StatCard title={t.total_expenses} value={formatMoney(totalExpenses)} trend={t.trend_monthly} trendType="down" icon={<TrendingDown className="w-4 h-4 lg:w-5 lg:h-5 text-amber-500" />} lang={lang} onClick={() => setActiveView('history')} />
-              <StatCard title={t.total_debt} value={formatMoney(totalDebt)} trend={t.trend_debt} trendType="down" icon={<ShieldAlert className="w-4 h-4 lg:w-5 lg:h-5 text-rose-500" />} lang={lang} isDebt onClick={() => setActiveView('accounts')} />
-              <StatCard title={t.budget_health} value={`${goals.length}`} trend={t.trend_goals} trendType="up" icon={<Target className="w-4 h-4 lg:w-5 lg:h-5" />} lang={lang} onClick={() => setActiveView('budgets')} />
-            </div>
-            <Charts transactions={transactions} lang={lang} />
-          </div>
-        )}
+      <main className="flex-1 flex flex-col min-w-0">
+        <Navbar 
+          lang={lang} 
+          updateLanguage={updateLanguage} 
+          currency={currency} 
+          updateCurrencyByCode={updateCurrencyByCode}
+          userName={userName}
+          userPhoto={userProfile?.photoURL}
+          onAddTransaction={() => { setEditingTransaction(null); setShowForm(true); }}
+          t={t}
+          setMobileMenuOpen={setMobileMenuOpen}
+        />
 
-        {activeView === 'history' && <TransactionList transactions={transactions} onDelete={handleDeleteTransaction} onEdit={(t) => { setEditingTransaction(t); setShowForm(true); }} lang={lang} />}
-        {activeView === 'budgets' && <BudgetsView goals={goals} transactions={transactions} formatMoney={formatMoney} lang={lang} onAddClick={() => { setEditingBudget(null); setShowBudgetForm(true); }} onEditClick={(goal: BudgetGoal) => { setEditingBudget(goal); setShowBudgetForm(true); }} onDelete={(id:string) => setConfirmDelete({ id, type: 'budget', message: t.no_budgets })} />}
-        {activeView === 'accounts' && <AccountsView accounts={accounts} formatMoney={formatMoney} lang={lang} onAddClick={() => { setEditingAccount(null); setShowAccountForm(true); }} onEditClick={(acc: Account) => { setEditingAccount(acc); setShowAccountForm(true); }} onDelete={(id:string) => setConfirmDelete({ id, type: 'account', message: t.no_accounts })} />}
-        {activeView === 'profile' && <ProfileView profile={userProfile} lang={lang} updateLanguage={updateLanguage} currency={currency} updateCurrencyByCode={updateCurrencyByCode} />}
-        {activeView === 'statement' && <StatementView profile={userProfile} accounts={accounts} transactions={transactions} currency={currency} lang={lang} onDelete={handleDeleteTransaction} />}
+        <div className="flex-1 p-4 lg:p-8 max-w-7xl mx-auto w-full">
+          {renderView()}
+        </div>
       </main>
 
-      <nav className="fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-md border-t border-gray-100 px-2 py-4 flex justify-around items-center lg:hidden z-40 shadow-[0_-10px_40px_rgba(0,0,0,0.03)] rounded-t-[2.5rem]">
-        <MobileNavLink icon={<LayoutDashboard className="w-5 h-5" />} active={activeView === 'dashboard'} onClick={() => setActiveView('dashboard')} />
-        <MobileNavLink icon={<History className="w-5 h-5" />} active={activeView === 'history'} onClick={() => setActiveView('history')} />
-        <MobileNavLink icon={<Target className="w-5 h-5" />} active={activeView === 'budgets'} onClick={() => setActiveView('budgets')} />
-        <button onClick={() => { setEditingTransaction(null); setShowForm(true); }} className="w-12 h-12 bg-blue-600 text-white rounded-2xl shadow-2xl flex items-center justify-center -translate-y-8 active:scale-90 transition-transform"><Plus className="w-6 h-6" /></button>
-        <MobileNavLink icon={<CreditCard className="w-5 h-5" />} active={activeView === 'accounts'} onClick={() => setActiveView('accounts')} />
-        <MobileNavLink icon={<FileText className="w-5 h-5" />} active={activeView === 'statement'} onClick={() => setActiveView('statement')} />
-        <MobileNavLink icon={<UserIcon className="w-5 h-5" />} active={activeView === 'profile'} onClick={() => setActiveView('profile')} />
-      </nav>
+      {showForm && (
+        <TransactionForm 
+          accounts={accounts} 
+          initialData={editingTransaction}
+          onAdd={handleAddTransaction}
+          onUpdate={handleUpdateTransaction}
+          onClose={() => { setShowForm(false); setEditingTransaction(null); }}
+          lang={lang}
+        />
+      )}
 
-      {showForm && <TransactionForm accounts={accounts} initialData={editingTransaction} onAdd={handleAddTransaction} onUpdate={handleUpdateTransaction} onClose={() => { setShowForm(false); setEditingTransaction(null); }} lang={lang} />}
-      {showBudgetForm && <BudgetForm initialData={editingBudget} onAdd={(b: any) => dataService.saveGoal(user!.uid, b)} onClose={() => { setShowBudgetForm(false); setEditingBudget(null); }} lang={lang} />}
-      {showAccountForm && <AccountForm initialData={editingAccount} onAdd={(a: any) => dataService.saveAccount(user!.uid, a)} onClose={() => { setShowAccountForm(false); setEditingAccount(null); }} lang={lang} />}
-      {confirmDelete && <ConfirmModal lang={lang} message={confirmDelete.message} onConfirm={handleConfirmDelete} onCancel={() => setConfirmDelete(null)} />}
-    </div>
-  );
-};
-
-const ProfileView = ({ profile, lang, updateLanguage, currency, updateCurrencyByCode }: any) => {
-  const tStrings = translations[lang];
-  const [name, setName] = useState(profile?.name || '');
-  const [photoURL, setPhotoURL] = useState(profile?.photoURL || '');
-  const [loading, setLoading] = useState(false);
-  const [photoLoading, setPhotoLoading] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const isUserTyping = useRef(false);
-
-  useEffect(() => {
-    if (!isUserTyping.current && profile?.name) setName(profile.name);
-    if (profile?.photoURL) setPhotoURL(profile.photoURL);
-  }, [profile]);
-
-  const handleUpdate = async () => {
-    if (!profile?.uid) return;
-    setLoading(true);
-    isUserTyping.current = false;
-    try { await dataService.updateUserProfile(profile.uid, { name, photoURL }); } finally { setLoading(false); }
-  };
-
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file && profile?.uid) {
-      setPhotoLoading(true);
-      const reader = new FileReader();
-      reader.onloadend = async () => {
-        const compressed = reader.result as string; 
-        setPhotoURL(compressed);
-        try { await dataService.updateUserProfile(profile.uid, { photoURL: compressed }); } finally { setPhotoLoading(false); }
-      };
-      reader.readAsDataURL(file);
-    }
-  };
-
-  return (
-    <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 max-w-2xl space-y-8 pb-10">
-      <div className="bg-white p-8 rounded-[2.5rem] border border-gray-100 shadow-sm">
-        <div className="flex items-center gap-6 mb-10">
-          <div className="relative group cursor-pointer" onClick={() => fileInputRef.current?.click()}>
-            <div className="w-24 h-24 bg-blue-100 text-blue-600 rounded-[2.5rem] flex items-center justify-center text-3xl font-black overflow-hidden border-2 border-white shadow-xl shadow-blue-50/50">
-              {photoLoading ? <Loader2 className="w-6 h-6 animate-spin" /> : photoURL ? <img src={photoURL} className="w-full h-full object-cover" /> : (profile?.name || 'U').charAt(0).toUpperCase()}
-            </div>
-            <div className="absolute -bottom-1 -right-1 bg-blue-600 text-white p-2 rounded-xl border-2 border-white shadow-lg"><Camera className="w-4 h-4" /></div>
-            <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={handleFileChange} />
-          </div>
-          <div><h2 className="text-2xl font-black text-gray-900">{profile?.name || 'User'}</h2><p className="text-gray-400 font-bold text-sm">{profile?.email}</p></div>
-        </div>
-        <div className="space-y-6">
-          <div>
-            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-2">{tStrings.full_name}</label>
-            <input 
-              type="text" 
-              value={name} 
-              onChange={(e) => { isUserTyping.current = true; setName(e.target.value); }} 
-              onBlur={() => { isUserTyping.current = false; }}
-              className="w-full bg-gray-50 border border-gray-100 p-4 rounded-2xl outline-none font-bold text-gray-800 focus:bg-white focus:border-blue-100 transition-colors text-sm" 
-            />
-          </div>
-          <button onClick={handleUpdate} disabled={loading} className="w-full bg-blue-600 text-white p-5 rounded-2xl font-black shadow-xl uppercase tracking-widest text-xs transition-all active:scale-95">{loading ? <Loader2 className="w-5 h-5 animate-spin mx-auto" /> : tStrings.update_profile}</button>
-        </div>
-      </div>
-      <div className="bg-white p-8 rounded-[2.5rem] border border-gray-100 shadow-sm space-y-8">
-        <div><h3 className="text-lg font-black text-gray-900 mb-6 flex items-center gap-2"><Globe className="w-5 h-5 text-blue-600" />{lang === 'ar' ? 'التفضيلات' : 'Preferences'}</h3><div className="space-y-6">
-          <div><label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-4">{tStrings.language}</label><div className="flex gap-3"><button onClick={() => updateLanguage('en')} className={`flex-1 py-4 rounded-2xl text-sm font-bold border transition-all ${lang === 'en' ? 'bg-blue-600 text-white shadow-xl shadow-blue-100 border-blue-600' : 'bg-gray-50 text-gray-400 border-gray-100'}`}>English</button><button onClick={() => updateLanguage('ar')} className={`flex-1 py-4 rounded-2xl text-sm font-bold border transition-all ${lang === 'ar' ? 'bg-blue-600 text-white shadow-xl shadow-blue-100 border-blue-600' : 'bg-gray-50 text-gray-400 border-gray-100'}`}>العربية</button></div></div>
-          <div><label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-4">{tStrings.currency}</label><select value={currency.code} onChange={(e) => updateCurrencyByCode(e.target.value)} className="w-full py-5 px-6 bg-gray-50 border border-gray-100 rounded-2xl text-sm font-bold text-gray-900 outline-none focus:bg-white focus:border-blue-100 transition-colors">{CURRENCIES.map(c => <option key={c.code} value={c.code}>{c.label} ({c.symbol})</option>)}</select></div>
-        </div></div>
-      </div>
-    </div>
-  );
-};
-
-const AccountsView = ({ accounts, formatMoney, lang, onAddClick, onEditClick, onDelete }: any) => {
-  const tStr = translations[lang];
-  return (
-    <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-      <div className="flex justify-between items-center"><h2 className="text-2xl font-black text-gray-900">{tStr.accounts}</h2><button onClick={onAddClick} className="text-blue-600 font-black text-sm uppercase tracking-widest">+{tStr.new_account}</button></div>
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {accounts.map((acc: Account) => {
-           const isCC = acc.type === 'Credit Card';
-           const limit = acc.creditLimit || 0;
-           const isDebt = isCC && limit > 0 && acc.balance < limit;
-           const isSurplus = isCC && limit > 0 && acc.balance > limit;
-           const usedAmount = Math.max(0, limit - acc.balance);
-           const usagePercent = limit > 0 ? Math.min(100, (usedAmount / limit) * 100) : 0;
-           
-           let gradientClass = 'bg-gradient-to-br from-indigo-600 via-blue-600 to-blue-700';
-           if (isDebt) gradientClass = 'bg-gradient-to-br from-rose-600 via-rose-500 to-rose-700';
-           if (isSurplus) gradientClass = 'bg-gradient-to-br from-emerald-600 via-emerald-500 to-emerald-700';
-
-           return (
-            <div key={acc.id} className={`p-8 lg:p-10 rounded-[2.5rem] text-white shadow-2xl relative overflow-hidden group transition-all duration-500 hover:scale-[1.02] ${gradientClass}`}>
-              <div className="absolute top-8 right-8 flex items-center gap-2 z-10 opacity-0 group-hover:opacity-100 transition-opacity"><button onClick={() => onEditClick(acc)} className="p-2 text-white/50 hover:text-white transition-colors"><Edit2 className="w-5 h-5" /></button><button onClick={() => onDelete(acc.id)} className="p-2 text-white/50 hover:text-rose-200 transition-colors"><Trash2 className="w-5 h-5" /></button></div>
-              <p className="text-[10px] uppercase font-black tracking-widest opacity-70 mb-2">{(tStr.account_types as any)[acc.type]}</p>
-              <h3 className="text-xl font-bold mb-8 relative z-10">{acc.name}</h3>
-              <div className="mb-2">
-                 <p className="text-[10px] uppercase font-black tracking-wider opacity-60 mb-1">{tStr.available_funds}</p>
-                 <p className="text-4xl font-black">{formatMoney(acc.balance)}</p>
+      {showBudgetForm && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-[2.5rem] p-8 w-full max-w-md shadow-2xl space-y-6 max-h-[90vh] overflow-y-auto">
+            <h2 className="text-xl font-bold">{editingBudget ? t.edit_budget : t.new_budget}</h2>
+            <form onSubmit={async (e) => {
+              e.preventDefault();
+              const formData = new FormData(e.currentTarget);
+              const data = {
+                category: formData.get('category') as Category,
+                limit: Number(formData.get('limit')),
+                startDate: formData.get('startDate') as string,
+                endDate: formData.get('endDate') as string,
+                items: budgetItems,
+              };
+              await dataService.saveGoal(user.uid, editingBudget ? { ...data, id: editingBudget.id } : data);
+              setShowBudgetForm(false);
+            }} className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-400 mb-2 uppercase">{t.category}</label>
+                <select name="category" defaultValue={editingBudget?.category} className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl font-bold focus:ring-2 focus:ring-blue-500/20 outline-none">
+                  {Object.keys(t.categories).filter(c => c !== 'Income' && c !== 'Settlement').map(c => <option key={c} value={c}>{t.categories[c]}</option>)}
+                </select>
               </div>
-              {isCC && limit > 0 && (
-                <div className="space-y-3 relative z-10 pt-6 mt-4 border-t border-white/10">
-                   <div className="flex justify-between text-[10px] font-black uppercase opacity-70">
-                      <span>{isSurplus ? tStr.surplus : tStr.used_credit}</span>
-                      <span>{isSurplus ? formatMoney(acc.balance - limit) : `${usagePercent.toFixed(0)}%`}</span>
-                   </div>
-                   <div className="w-full h-2 bg-white/20 rounded-full overflow-hidden">
-                      <div className={`h-full transition-all duration-1000 ${isSurplus ? 'bg-emerald-300' : (isDebt ? 'bg-rose-300' : 'bg-white')}`} style={{ width: isSurplus ? '100%' : `${usagePercent}%` }} />
-                   </div>
-                   <p className="text-[10px] font-black uppercase opacity-50 tracking-wider">{tStr.credit_limit}: {formatMoney(limit)}</p>
+              <div>
+                <label className="block text-xs font-bold text-slate-400 mb-2 uppercase">{t.amount}</label>
+                <input 
+                  name="limit" 
+                  type="number" 
+                  value={limitInputVal} 
+                  onChange={(e) => setLimitInputVal(e.target.value)} 
+                  required 
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl font-bold focus:ring-2 focus:ring-blue-500/20 outline-none" 
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-400 mb-2 uppercase">{t.date_from}</label>
+                  <input 
+                    name="startDate" 
+                    type="date" 
+                    defaultValue={editingBudget?.startDate || new Date().toISOString().split('T')[0]} 
+                    required 
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl font-bold focus:ring-2 focus:ring-blue-500/20 outline-none text-xs" 
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-400 mb-2 uppercase">{t.date_to}</label>
+                  <input 
+                    name="endDate" 
+                    type="date" 
+                    defaultValue={editingBudget?.endDate || new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0).toISOString().split('T')[0]} 
+                    required 
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl font-bold focus:ring-2 focus:ring-blue-500/20 outline-none text-xs" 
+                  />
+                </div>
+              </div>
+
+              {/* Sub-items Checklist Section */}
+              <div className="border-t border-slate-100 pt-4 space-y-3">
+                <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider">{t.trip_planning_items}</label>
+                
+                {/* Add Sub-item Form Controls */}
+                <div className="flex gap-2">
+                  <input 
+                    type="text" 
+                    value={newSubItemName}
+                    onChange={(e) => setNewSubItemName(e.target.value)}
+                    placeholder={t.item_name}
+                    className="flex-1 px-3 py-2 bg-slate-50 border border-slate-100 rounded-xl text-xs font-bold focus:ring-2 focus:ring-blue-500/20 outline-none"
+                  />
+                  <input 
+                    type="number" 
+                    value={newSubItemCost}
+                    onChange={(e) => setNewSubItemCost(e.target.value)}
+                    placeholder={t.estimated_cost}
+                    className="w-16 px-2 py-2 bg-slate-50 border border-slate-100 rounded-xl text-xs font-bold focus:ring-2 focus:ring-blue-500/20 outline-none font-mono"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!newSubItemName.trim()) return;
+                      const val = Number(newSubItemCost) || 0;
+                      const newItem = {
+                        id: Date.now().toString(),
+                        name: newSubItemName.trim(),
+                        cost: val,
+                        completed: false
+                      };
+                      setBudgetItems([...budgetItems, newItem]);
+                      setNewSubItemName('');
+                      setNewSubItemCost('');
+                    }}
+                    className="bg-blue-50 text-blue-600 px-3 py-1 rounded-xl text-xs font-black hover:bg-blue-100 transition-colors"
+                  >
+                    {t.add_item}
+                  </button>
+                </div>
+
+                {/* List of current sub-items */}
+                {budgetItems.length > 0 ? (
+                  <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
+                    {budgetItems.map(item => (
+                      <div key={item.id} className="flex justify-between items-center bg-slate-50 p-2 rounded-xl text-xs">
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-slate-700">{item.name}</span>
+                          <span className="text-[10px] text-slate-400 font-mono">({formatMoney(item.cost)})</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setBudgetItems(budgetItems.filter(i => i.id !== item.id));
+                          }}
+                          className="text-rose-500 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 p-1 rounded-lg"
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                      </div>
+                    ))}
+                    
+                    {/* Option to apply sum to total budget */}
+                    <div className="flex items-center justify-between pt-1 border-t border-slate-100 text-[11px]">
+                      <span className="font-bold text-slate-500">
+                        {t.total_planned}: <span className="font-mono text-slate-700 font-black">{formatMoney(budgetItems.reduce((sum, item) => sum + item.cost, 0))}</span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const sum = budgetItems.reduce((acc, curr) => acc + curr.cost, 0);
+                          setLimitInputVal(sum.toString());
+                        }}
+                        className="text-blue-600 hover:underline font-bold"
+                      >
+                        {t.set_limit_to_total}
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-[11px] text-slate-400 italic text-center py-2">{t.no_items_planned}</p>
+                )}
+              </div>
+
+              <div className="flex gap-4 pt-4">
+                <button type="button" onClick={() => setShowBudgetForm(false)} className="flex-1 py-3 font-bold text-slate-400">{t.cancel}</button>
+                <button type="submit" className="flex-1 py-3 bg-blue-600 text-white rounded-xl font-bold">{editingBudget ? t.update : t.save}</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {showAccountForm && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-[2.5rem] p-8 w-full max-w-sm shadow-2xl space-y-6">
+            <h2 className="text-xl font-bold">{editingAccount ? t.edit_account : t.new_account}</h2>
+            <form onSubmit={async (e) => {
+              e.preventDefault();
+              const formData = new FormData(e.currentTarget);
+              const data = {
+                name: formData.get('name') as string,
+                type: formData.get('type') as AccountType,
+                balance: Number(formData.get('balance')),
+                creditLimit: formData.get('creditLimit') ? Number(formData.get('creditLimit')) : undefined,
+              };
+              await dataService.saveAccount(user.uid, editingAccount ? { ...data, id: editingAccount.id } : data);
+              setShowAccountForm(false);
+            }} className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-400 mb-2 uppercase">{t.account_name}</label>
+                <input name="name" defaultValue={editingAccount?.name} required className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl font-bold" />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-400 mb-2 uppercase">{t.type}</label>
+                <select 
+                  name="type" 
+                  value={accountType}
+                  onChange={(e) => setAccountType(e.target.value as AccountType)}
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl font-bold"
+                >
+                  {Object.keys(t.account_types).map(type => <option key={type} value={type}>{t.account_types[type]}</option>)}
+                </select>
+              </div>
+
+              {accountType === 'Credit Card' && (
+                <div>
+                  <label className="block text-xs font-bold text-slate-400 mb-2 uppercase">{t.credit_limit}</label>
+                  <input name="creditLimit" type="number" defaultValue={editingAccount?.creditLimit} required className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl font-bold" />
                 </div>
               )}
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-};
 
-const BudgetsView = ({ goals, transactions, formatMoney, lang, onAddClick, onEditClick, onDelete }: any) => {
-  const tStr = translations[lang];
-  return (
-    <div className="space-y-8">
-      <div className="flex justify-between items-center"><h2 className="text-2xl font-black text-gray-900">{tStr.budgets}</h2><button onClick={onAddClick} className="text-blue-600 font-black text-sm uppercase tracking-widest">+{tStr.new_budget}</button></div>
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {goals.map((goal: BudgetGoal) => {
-          const spent = transactions
-            .filter(tr => tr.category === goal.category && new Date(tr.date) >= new Date(goal.startDate) && new Date(tr.date) <= new Date(goal.endDate))
-            .reduce((s, tr) => s + tr.amount, 0);
-          const percent = Math.min((spent / goal.limit) * 100, 100);
-          return (
-            <div key={goal.id} className="bg-white p-8 rounded-[2.5rem] border border-gray-100 shadow-sm relative group hover:shadow-lg transition-all">
-              <div className="flex justify-between mb-4">
-                <div className="flex items-center gap-4">
-                  <div className="p-3 bg-blue-50 text-blue-600 rounded-2xl">{CATEGORY_ICONS[goal.category]}</div>
-                  <div>
-                    <h3 className="font-bold text-gray-800">{(tStr.categories as any)[goal.category]}</h3>
-                    <p className="text-[10px] text-gray-400 font-bold uppercase">{goal.startDate} - {goal.endDate}</p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                  <button onClick={() => onEditClick(goal)} className="p-1.5 text-gray-300 hover:text-blue-500"><Edit2 className="w-4 h-4" /></button>
-                  <button onClick={() => onDelete(goal.id)} className="p-1.5 text-gray-300 hover:text-rose-500"><Trash2 className="w-4 h-4" /></button>
-                </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-400 mb-2 uppercase">
+                  {accountType === 'Credit Card' ? t.available_credit : t.initial_balance}
+                </label>
+                <input name="balance" type="number" defaultValue={editingAccount?.balance} required className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl font-bold" />
               </div>
-              <div className="w-full h-3 bg-gray-50 rounded-full overflow-hidden mb-3"><div className={`h-full transition-all duration-1000 ${percent > 90 ? 'bg-rose-500' : 'bg-blue-600'}`} style={{width: `${percent}%`}} /></div>
-              <div className="flex justify-between text-[10px] font-black text-gray-400 uppercase tracking-widest"><span>{formatMoney(spent)}</span><span className={percent > 90 ? 'text-rose-500' : 'text-blue-600'}>{percent.toFixed(0)}%</span></div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-};
-
-const StatementView = ({ profile, accounts, transactions, currency, lang, onDelete }: { profile: UserProfile | null, accounts: Account[], transactions: Transaction[], currency: Currency, lang: Language, onDelete: (id: string) => void }) => {
-  const t = translations[lang];
-  const [selectedAccountId, setSelectedAccountId] = useState(accounts[0]?.id || '');
-  const [period, setPeriod] = useState<'current' | 'last' | 'custom'>('current');
-  const [dateFrom, setDateFrom] = useState('');
-  const [dateTo, setDateTo] = useState('');
-  const filteredTransactions = useMemo(() => {
-    if (!selectedAccountId) return [];
-    let list = transactions.filter(tr => tr.accountId === selectedAccountId);
-    const now = new Date();
-    if (period === 'current') list = list.filter(tr => { const d = new Date(tr.date); return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear(); });
-    else if (period === 'last') { const lm = new Date(now.getFullYear(), now.getMonth() - 1); list = list.filter(tr => { const d = new Date(tr.date); return d.getMonth() === lm.getMonth() && d.getFullYear() === lm.getFullYear(); }); }
-    else if (period === 'custom') { if (dateFrom) list = list.filter(tr => new Date(tr.date) >= new Date(dateFrom)); if (dateTo) list = list.filter(tr => new Date(tr.date) <= new Date(dateTo)); }
-    return list.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-  }, [transactions, selectedAccountId, period, dateFrom, dateTo]);
-  const acc = accounts.find(a => a.id === selectedAccountId);
-  const format = (val: number) => `${currency.symbol} ${val.toLocaleString(lang, { minimumFractionDigits: 2 })}`;
-  return (
-    <div className="animate-in fade-in duration-500 space-y-8">
-      <div className="bg-white p-8 rounded-[2.5rem] border border-gray-100 shadow-sm relative overflow-hidden print:border-none print:p-0">
-        <div className="flex justify-between items-start mb-8 print:hidden"><div className="grid grid-cols-1 md:grid-cols-2 gap-8 flex-1">
-          <div><label className="text-[10px] font-black text-gray-900 uppercase tracking-widest block mb-3">{t.select_account}</label><select value={selectedAccountId} onChange={(e) => setSelectedAccountId(e.target.value)} className="w-full bg-gray-50 border border-gray-100 p-4 rounded-2xl outline-none font-bold text-sm focus:bg-white transition-all">{accounts.map(acc => <option key={acc.id} value={acc.id}>{acc.name}</option>)}</select></div>
-          <div><label className="text-[10px] font-black text-gray-900 uppercase tracking-widest block mb-3">{t.period}</label><div className="flex flex-wrap gap-2">{(['current', 'last', 'custom'] as const).map(p => <button key={p} onClick={() => setPeriod(p)} className={`px-4 py-3 rounded-xl text-xs font-bold border transition-all ${period === p ? 'bg-blue-600 text-white shadow-lg shadow-blue-100 border-blue-600' : 'bg-gray-50 text-gray-400 border-gray-100'}`}>{(t as any)[p] || p}</button>)}</div></div>
-        </div><button onClick={() => window.print()} className="ms-4 p-4 bg-gray-50 hover:bg-white border border-gray-100 rounded-2xl text-gray-400 hover:text-blue-600 transition-all active:scale-95 print:hidden"><Printer className="w-5 h-5" /></button></div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 p-6 bg-blue-50/50 rounded-3xl border border-blue-100 print:bg-transparent print:border-none print:px-0 print:mb-8"><div className="print:border-l-2 print:pl-4"><p className="text-[10px] font-black text-blue-500 uppercase tracking-widest mb-1 print:text-gray-400">{t.summary}</p><p className="text-sm font-bold text-blue-900 print:text-gray-900">{acc?.name || '---'}</p></div><div className="print:border-l-2 print:pl-4"><p className="text-[10px] font-black text-blue-500 uppercase tracking-widest mb-1 print:text-blue-400">{t.available_funds}</p><p className="text-base font-black text-blue-600 print:text-2xl">{format(acc?.balance || 0)}</p></div></div>
-      </div>
-      <TransactionList transactions={filteredTransactions} lang={lang} onDelete={onDelete} />
-    </div>
-  );
-};
-
-const StatCard = ({ title, value, trend, trendType, icon, isDebt, onClick }: any) => (
-  <div onClick={onClick} className={`bg-white p-6 lg:p-8 rounded-[2.5rem] border border-gray-100 flex items-start justify-between shadow-sm hover:shadow-lg transition-all cursor-pointer group active:scale-[0.98] ${isDebt ? 'border-rose-50' : ''}`}>
-    <div><p className={`text-[10px] font-black uppercase tracking-widest mb-3 ${isDebt ? 'text-rose-400' : 'text-gray-400'}`}>{title}</p><h3 className="text-xl lg:text-2xl font-black text-gray-900 mb-2">{value}</h3><div className={`text-[10px] font-bold ${isDebt ? 'text-rose-500' : (trendType === 'up' ? 'text-emerald-500' : 'text-blue-500')}`}>{trend}</div></div>
-    <div className={`p-4 rounded-[2rem] transition-colors ${isDebt ? 'bg-rose-50 text-rose-500' : 'bg-gray-50 group-hover:bg-blue-50 group-hover:text-blue-600'}`}>{icon}</div>
-  </div>
-);
-
-const BudgetForm = ({ onAdd, onClose, lang, initialData }: any) => {
-  const tStr = translations[lang];
-  const [category, setCategory] = useState<Category>(initialData?.category || CATEGORIES[0]);
-  const [limit, setLimit] = useState(initialData?.limit?.toString() || '');
-  const [startDate, setStartDate] = useState(initialData?.startDate || new Date().toISOString().split('T')[0]);
-  const [endDate, setEndDate] = useState(initialData?.endDate || new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0).toISOString().split('T')[0]);
-
-  return (
-    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[110] p-4 animate-in fade-in duration-200">
-      <div className="bg-white rounded-[2.5rem] p-8 w-full max-w-sm shadow-2xl animate-in zoom-in-95 duration-300">
-        <h2 className="text-2xl font-black mb-6 text-gray-900">{initialData ? tStr.edit_budget : tStr.new_budget}</h2>
-        <div className="space-y-4">
-          <select value={category} onChange={e => setCategory(e.target.value as Category)} className="w-full border border-gray-100 p-4 rounded-2xl bg-gray-50 outline-none font-bold text-sm focus:bg-white transition-all">
-            {CATEGORIES.map(c => <option key={c} value={c}>{(tStr.categories as any)[c]}</option>)}
-          </select>
-          <div>
-            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-2 px-1">{tStr.amount}</label>
-            <input type="number" value={limit} onChange={e => setLimit(e.target.value)} className="w-full border border-gray-100 p-4 rounded-2xl bg-gray-50 outline-none font-black text-lg focus:bg-white transition-all" placeholder="0.00" />
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-2 px-1">{tStr.start_date}</label>
-              <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="w-full border border-gray-100 p-4 rounded-2xl bg-gray-50 outline-none font-bold text-xs focus:bg-white" />
-            </div>
-            <div>
-              <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-2 px-1">{tStr.end_date}</label>
-              <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="w-full border border-gray-100 p-4 rounded-2xl bg-gray-50 outline-none font-bold text-xs focus:bg-white" />
-            </div>
-          </div>
-          <div className="flex gap-4 pt-6">
-            <button onClick={onClose} className="flex-1 font-bold text-gray-400 hover:bg-gray-50 rounded-2xl">Cancel</button>
-            <button onClick={() => { if(!limit) return; onAdd({ ...initialData, category, limit: Number(limit), startDate, endDate }); onClose(); }} className="flex-1 bg-blue-600 text-white p-4 rounded-2xl font-black uppercase text-xs shadow-xl shadow-blue-100 transition-all active:scale-95">{initialData ? tStr.update : tStr.save}</button>
+              <div className="flex gap-4 pt-4">
+                <button type="button" onClick={() => setShowAccountForm(false)} className="flex-1 py-3 font-bold text-slate-400">{t.cancel}</button>
+                <button type="submit" className="flex-1 py-3 bg-blue-600 text-white rounded-xl font-bold">{editingAccount ? t.update : t.save}</button>
+              </div>
+            </form>
           </div>
         </div>
-      </div>
+      )}
+
+      {confirmDelete && (
+        <ConfirmModal 
+          lang={lang} 
+          message={confirmDelete.message}
+          onConfirm={async () => {
+             if (confirmDelete.type === 'transaction') {
+               await handleDeleteTransaction(confirmDelete.id);
+             } else if (confirmDelete.type === 'budget') {
+               await dataService.deleteGoal(user.uid, confirmDelete.id);
+               setConfirmDelete(null);
+             } else if (confirmDelete.type === 'account') {
+               await dataService.deleteAccount(user.uid, confirmDelete.id);
+               setConfirmDelete(null);
+             }
+          }}
+          onCancel={() => setConfirmDelete(null)}
+        />
+      )}
     </div>
   );
 };
-
-const AccountForm = ({ onAdd, onClose, lang, initialData }: any) => {
-  const tStr = translations[lang];
-  const [name, setName] = useState(initialData?.name || '');
-  const [type, setType] = useState<AccountType>(initialData?.type || 'Checking');
-  const [balance, setBalance] = useState(initialData?.balance?.toString() || '');
-  const [creditLimit, setCreditLimit] = useState(initialData?.creditLimit?.toString() || '');
-  return (
-    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[110] p-4 animate-in fade-in duration-200">
-      <div className="bg-white rounded-[2.5rem] p-10 w-full max-w-md shadow-2xl animate-in zoom-in-95 duration-300">
-        <h2 className="text-2xl font-black mb-8 text-gray-900">{initialData ? tStr.edit_account : tStr.new_account}</h2>
-        <div className="space-y-5">
-          <input type="text" value={name} onChange={e => setName(e.target.value)} className="w-full border border-gray-100 p-4 rounded-2xl bg-gray-50 outline-none font-bold text-sm focus:bg-white" placeholder={tStr.account_name} />
-          <select value={type} onChange={e => setType(e.target.value as AccountType)} className="w-full border border-gray-100 p-4 rounded-2xl bg-gray-50 outline-none font-bold text-sm focus:bg-white">{['Checking', 'Savings', 'Credit Card', 'Investment', 'Cash'].map(at => <option key={at} value={at}>{(tStr.account_types as any)[at]}</option>)}</select>
-          <div className="space-y-2">
-             <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest px-1">{tStr.initial_balance}</label>
-             <input type="number" value={balance} onChange={e => setBalance(e.target.value)} className="w-full border border-gray-100 p-4 rounded-2xl bg-gray-50 outline-none font-black text-lg focus:bg-white" placeholder="0.00" />
-          </div>
-          {type === 'Credit Card' && (
-            <div className="space-y-2 animate-in slide-in-from-top-2">
-               <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest px-1">{tStr.credit_limit}</label>
-               <input type="number" value={creditLimit} onChange={e => setCreditLimit(e.target.value)} className="w-full border border-rose-100 p-4 rounded-2xl bg-rose-50/30 outline-none font-black text-lg focus:bg-white focus:border-rose-400" placeholder="0.00" />
-            </div>
-          )}
-          <div className="flex gap-4 pt-6"><button onClick={onClose} className="flex-1 font-bold text-gray-400 hover:bg-gray-50 rounded-2xl">Cancel</button><button onClick={() => { if(!name || !balance) return; onAdd({ ...initialData, name, type, balance: Number(balance), creditLimit: type === 'Credit Card' ? Number(creditLimit) : undefined }); onClose(); }} className="flex-1 bg-blue-600 text-white p-4 rounded-2xl font-black uppercase text-xs shadow-xl shadow-blue-100 transition-all active:scale-95">Save Account</button></div>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-const NavLink = ({ icon, label, active, onClick }: any) => (
-  <button onClick={onClick} className={`w-full flex items-center gap-4 px-5 py-3.5 rounded-2xl text-sm font-bold transition-all ${active ? 'bg-blue-50 text-blue-600 shadow-sm border border-blue-100' : 'text-gray-400 hover:bg-gray-50'}`}>{icon}{label}</button>
-);
-const MobileNavLink = ({ icon, active, onClick }: any) => (
-  <button onClick={onClick} className={`p-3 rounded-2xl transition-all ${active ? 'text-blue-600 bg-blue-50 shadow-sm' : 'text-gray-400'}`}>{icon}</button>
-);
 
 export default App;

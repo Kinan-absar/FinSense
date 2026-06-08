@@ -1,14 +1,13 @@
 import React, { useState, useMemo, useRef } from 'react';
 import { CATEGORIES, MOODS } from '../constants';
-import { Transaction, Category, Mood, Account } from '../types';
-import { PlusCircle, X, ArrowDownRight, RefreshCw, Camera, Loader2, Sparkles, CheckCircle2, AlertCircle, Lightbulb } from 'lucide-react';
+import { Transaction, Category, Mood, Account, TransactionType, RecurringFrequency } from '../types';
+import { PlusCircle, X, ArrowDownRight, RefreshCw, Camera, CheckCircle2, AlertCircle, Calendar, Repeat } from 'lucide-react';
 import { Language, translations } from '../translations';
-import { GoogleGenAI, Type } from "@google/genai";
 
 interface Props {
   accounts: Account[];
   initialData?: Transaction | null;
-  onAdd: (t: Omit<Transaction, 'userId'>) => void;
+  onAdd: (t: Omit<Transaction, 'id' | 'userId'>) => void;
   onUpdate?: (id: string, t: Partial<Transaction>) => void;
   onClose: () => void;
   lang: Language;
@@ -18,6 +17,7 @@ const TransactionForm: React.FC<Props> = ({ accounts, initialData, onAdd, onUpda
   const tStrings = translations[lang];
   const [amount, setAmount] = useState(initialData?.amount.toString() || '');
   const [category, setCategory] = useState<Category>(initialData?.category || CATEGORIES[0]);
+  const [type, setType] = useState<TransactionType>(initialData?.type || 'expense');
   const [description, setDescription] = useState(initialData?.description || '');
   const [mood, setMood] = useState<Mood>(initialData?.mood || 'Neutral');
   const [accountId, setAccountId] = useState(initialData?.accountId || accounts[0]?.id || '');
@@ -25,10 +25,12 @@ const TransactionForm: React.FC<Props> = ({ accounts, initialData, onAdd, onUpda
   const [isSettlement, setIsSettlement] = useState(initialData?.isSettlement || false);
   const [date, setDate] = useState(initialData?.date || new Date().toISOString().split('T')[0]);
   const [time, setTime] = useState(initialData?.time || new Date().toTimeString().slice(0, 5));
+  const [isRecurring, setIsRecurring] = useState(initialData?.isRecurring || false);
+  const [recurringFrequency, setRecurringFrequency] = useState<RecurringFrequency>(initialData?.recurringFrequency || 'monthly');
 
-  // OCR States
-  const [scanning, setScanning] = useState(false);
-  const [scanStatus, setScanStatus] = useState<'idle' | 'success' | 'error'>('idle');
+  const [uploading, setUploading] = useState(false);
+  const [uploadStatus, setUploadStatus] = useState<'idle' | 'success' | 'error'>('idle');
+  const [attachments, setAttachments] = useState<string[]>(initialData?.attachments || []);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const creditCardAccounts = useMemo(() => accounts.filter(a => a.type === 'Credit Card'), [accounts]);
@@ -36,83 +38,30 @@ const TransactionForm: React.FC<Props> = ({ accounts, initialData, onAdd, onUpda
 
   const isEditing = !!initialData;
 
-  const handleScanReceipt = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    setScanning(true);
-    setScanStatus('idle');
+    if (file.size > 2 * 1024 * 1024) {
+      alert(lang === 'ar' ? 'حجم الملف كبير جداً (الحد الأقصى ٢ ميجابايت)' : 'File size too large (Max 2MB)');
+      return;
+    }
+
+    setUploading(true);
+    setUploadStatus('idle');
 
     try {
       const reader = new FileReader();
-      reader.onloadend = async () => {
-        const base64Data = (reader.result as string).split(',')[1];
-        
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-        const response = await ai.models.generateContent({
-          model: 'gemini-2.5-flash-image',
-          contents: [
-            {
-              inlineData: {
-                data: base64Data,
-                mimeType: file.type,
-              },
-            },
-            {
-              text: `You are a financial accounting expert. Your task is to extract high-accuracy transaction data from the provided image of a receipt, invoice, or bill.
-              
-              Rules:
-              1. **Grand Total**: Identify the final amount paid. Ignore sub-totals or tax breakdowns. Look for keywords like "Total", "Balance Due", "Net", or "Amount".
-              2. **Merchant Name**: Look at the top of the image for the vendor/business name.
-              3. **Date**: Extract the purchase date in YYYY-MM-DD format. If not found, use today's date (${new Date().toISOString().split('T')[0]}).
-              4. **Category**: Match the merchant or items to the most logical category from this specific list: [${CATEGORIES.join(', ')}].
-              5. **Mood**: Based on the purchase type (e.g., luxury=Excited, bill=Stressed, food=Happy), choose one from: [${MOODS.join(', ')}].
-              
-              Output your findings ONLY as a pure JSON object. No markdown, no explanations.`,
-            },
-          ],
-          config: {
-            responseMimeType: "application/json",
-            responseSchema: {
-              type: Type.OBJECT,
-              properties: {
-                amount: { type: Type.NUMBER, description: "The final total amount shown on the receipt" },
-                date: { type: Type.STRING, description: "Date in YYYY-MM-DD format" },
-                description: { type: Type.STRING, description: "Merchant or store name" },
-                category: { type: Type.STRING, description: "One of the provided category names" },
-                mood: { type: Type.STRING, description: "One of the provided mood types" }
-              },
-              required: ["amount", "description"]
-            }
-          }
-        });
-
-        const rawText = response.text || '{}';
-        const result = JSON.parse(rawText);
-        
-        if (result.amount) setAmount(result.amount.toString());
-        if (result.description) setDescription(result.description);
-        if (result.date && /^\d{4}-\d{2}-\d{2}$/.test(result.date)) setDate(result.date);
-        
-        // Ensure category matches valid options
-        if (result.category && CATEGORIES.includes(result.category)) {
-          setCategory(result.category as Category);
-        }
-        
-        if (result.mood && MOODS.includes(result.mood)) {
-          setMood(result.mood as Mood);
-        }
-
-        setScanStatus('success');
-        setTimeout(() => setScanStatus('idle'), 3000);
+      reader.onloadend = () => {
+        setAttachments(prev => [...prev, reader.result as string]);
+        setUploadStatus('success');
+        setTimeout(() => setUploadStatus('idle'), 3000);
       };
       reader.readAsDataURL(file);
     } catch (err) {
-      console.error("OCR Scan error:", err);
-      setScanStatus('error');
+      setUploadStatus('error');
     } finally {
-      setScanning(false);
-      if (fileInputRef.current) fileInputRef.current.value = '';
+      setUploading(false);
     }
   };
 
@@ -121,10 +70,10 @@ const TransactionForm: React.FC<Props> = ({ accounts, initialData, onAdd, onUpda
     if (!amount || isNaN(Number(amount))) return;
     if (isSettlement && !targetAccountId) return;
 
-    // Construct a plain object to avoid circular references
     const transactionData = {
       amount: Number(amount),
       category: isSettlement ? 'Settlement' : category,
+      type: isSettlement ? 'expense' : type,
       description: isSettlement ? (description.startsWith(tStrings.is_settlement) ? description : `${tStrings.is_settlement}: ${description}`) : description,
       mood: mood,
       date: date,
@@ -132,15 +81,15 @@ const TransactionForm: React.FC<Props> = ({ accounts, initialData, onAdd, onUpda
       accountId: accountId,
       isSettlement: isSettlement,
       targetAccountId: isSettlement ? targetAccountId : null,
+      isRecurring,
+      recurringFrequency: isRecurring ? recurringFrequency : undefined,
+      attachments
     };
 
     if (isEditing && onUpdate && initialData?.id) {
       onUpdate(initialData.id, transactionData);
     } else {
-      onAdd({
-        ...transactionData,
-        id: Math.random().toString(36).substr(2, 9),
-      } as any);
+      onAdd(transactionData as any);
     }
     onClose();
   };
@@ -158,71 +107,21 @@ const TransactionForm: React.FC<Props> = ({ accounts, initialData, onAdd, onUpda
         </div>
         
         <form onSubmit={handleSubmit} className="p-6 space-y-4 max-h-[80vh] overflow-y-auto custom-scrollbar">
-          {/* AI OCR Section */}
-          {!isEditing && !isSettlement && (
-            <div className="space-y-3">
-              <input type="file" accept="image/*" className="hidden" ref={fileInputRef} onChange={handleScanReceipt} />
-              <button 
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={scanning}
-                className={`w-full group flex flex-col items-center justify-center gap-2 p-6 rounded-2xl border-2 border-dashed transition-all active:scale-95 ${scanStatus === 'success' ? 'bg-emerald-50 border-emerald-200 text-emerald-600' : scanStatus === 'error' ? 'bg-rose-50 border-rose-100 text-rose-600' : 'bg-blue-50 border-blue-100 text-blue-600 hover:border-blue-300'}`}
-              >
-                {scanning ? (
-                  <Loader2 className="w-8 h-8 animate-spin" />
-                ) : scanStatus === 'success' ? (
-                  <CheckCircle2 className="w-8 h-8 animate-bounce" />
-                ) : scanStatus === 'error' ? (
-                  <AlertCircle className="w-8 h-8" />
-                ) : (
-                  <Camera className="w-8 h-8 group-hover:scale-110 transition-transform" />
-                )}
-                <div className="text-center">
-                  <span className="text-sm font-black uppercase tracking-widest block">
-                    {scanning ? tStrings.scanning : scanStatus === 'success' ? tStrings.scan_success : scanStatus === 'error' ? tStrings.scan_error : tStrings.scan_receipt}
-                  </span>
-                  {!scanning && scanStatus === 'idle' && (
-                    <span className="text-[10px] opacity-60 font-bold block mt-1">
-                      {lang === 'ar' ? 'صور الفاتورة لاستخراج البيانات بدقة' : 'High-precision scanning for receipts and invoices'}
-                    </span>
-                  )}
-                </div>
-              </button>
-
-              {/* Scanning Tips */}
-              {!scanning && scanStatus === 'idle' && (
-                <div className="bg-blue-50/30 p-4 rounded-xl flex gap-3 border border-blue-100/50">
-                   <Lightbulb className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
-                   <p className="text-[10px] font-bold text-gray-500 leading-relaxed">
-                     {lang === 'ar' 
-                        ? 'نصيحة: تأكد من أن الفاتورة مفرودة وإضاءة المكان جيدة للحصول على أفضل النتائج.' 
-                        : 'Tip: Ensure the receipt is flat and well-lit for the best extraction accuracy.'}
-                   </p>
-                </div>
-              )}
-            </div>
-          )}
-
-          <div className="flex items-center justify-between p-4 bg-blue-50/50 rounded-2xl border border-blue-100">
-            <div className="flex items-center gap-3">
-               <ArrowDownRight className="w-5 h-5 text-blue-600" />
-               <span className="text-sm font-bold text-blue-900">{tStrings.is_settlement}</span>
-            </div>
-            <button 
+          {/* Type Toggle */}
+          <div className="flex bg-gray-100 p-1 rounded-2xl">
+            <button
               type="button"
-              onClick={() => {
-                const nextState = !isSettlement;
-                setIsSettlement(nextState);
-                if (nextState) {
-                  const firstFund = fundingAccounts[0]?.id;
-                  if (firstFund) setAccountId(firstFund);
-                  const firstCC = creditCardAccounts[0]?.id;
-                  if (firstCC) setTargetAccountId(firstCC);
-                }
-              }}
-              className={`w-12 h-6 rounded-full transition-all relative ${isSettlement ? 'bg-blue-600' : 'bg-gray-200'}`}
+              onClick={() => { setType('expense'); setIsSettlement(false); }}
+              className={`flex-1 py-2 rounded-xl text-sm font-bold transition-all ${type === 'expense' ? 'bg-white text-rose-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
             >
-              <div className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-all ${lang === 'ar' ? (isSettlement ? 'right-7' : 'right-1') : (isSettlement ? 'left-7' : 'left-1')}`} />
+              {tStrings.expense}
+            </button>
+            <button
+              type="button"
+              onClick={() => { setType('income'); setIsSettlement(false); setCategory('Income'); }}
+              className={`flex-1 py-2 rounded-xl text-sm font-bold transition-all ${type === 'income' ? 'bg-white text-emerald-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+            >
+              {tStrings.income}
             </button>
           </div>
 
@@ -234,22 +133,60 @@ const TransactionForm: React.FC<Props> = ({ accounts, initialData, onAdd, onUpda
               step="0.01"
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
-              className="w-full px-4 py-4 text-2xl font-bold border border-gray-100 bg-gray-50 rounded-2xl focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+              className={`w-full px-4 py-4 text-2xl font-bold border border-gray-100 bg-gray-50 rounded-2xl focus:ring-2 outline-none transition-all ${type === 'income' ? 'text-emerald-600 focus:ring-emerald-500' : 'text-rose-600 focus:ring-rose-500'}`}
               placeholder="0.00"
             />
           </div>
 
-          <div>
-            <label className="block text-xs font-bold text-gray-400 uppercase tracking-widest mb-2">{tStrings.source_account}</label>
-            <select
-              value={accountId}
-              onChange={(e) => setAccountId(e.target.value)}
-              className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl text-sm outline-none font-bold text-gray-700"
+          <div className="flex items-center justify-between p-4 bg-blue-50/50 rounded-2xl border border-blue-100">
+            <div className="flex items-center gap-3">
+               <ArrowDownRight className="w-5 h-5 text-blue-600" />
+               <span className="text-sm font-bold text-blue-900">{tStrings.is_settlement}</span>
+            </div>
+            <button 
+              type="button"
+              disabled={type === 'income'}
+              onClick={() => {
+                const nextState = !isSettlement;
+                setIsSettlement(nextState);
+                if (nextState) {
+                  const firstFund = fundingAccounts[0]?.id;
+                  if (firstFund) setAccountId(firstFund);
+                  const firstCC = creditCardAccounts[0]?.id;
+                  if (firstCC) setTargetAccountId(firstCC);
+                  setType('expense');
+                }
+              }}
+              className={`w-12 h-6 rounded-full transition-all relative ${isSettlement ? 'bg-blue-600' : 'bg-gray-200'} ${type === 'income' ? 'opacity-50 cursor-not-allowed' : ''}`}
             >
-              {(isSettlement ? fundingAccounts : accounts).map(acc => (
-                <option key={acc.id} value={acc.id}>{acc.name} ({acc.balance.toLocaleString()})</option>
-              ))}
-            </select>
+              <div className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-all ${lang === 'ar' ? (isSettlement ? 'right-7' : 'right-1') : (isSettlement ? 'left-7' : 'left-1')}`} />
+            </button>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-bold text-gray-400 uppercase tracking-widest mb-2">{tStrings.source_account}</label>
+              <select
+                value={accountId}
+                onChange={(e) => setAccountId(e.target.value)}
+                className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl text-sm outline-none font-bold text-gray-700"
+              >
+                {(isSettlement ? fundingAccounts : accounts).map(acc => (
+                  <option key={acc.id} value={acc.id}>{acc.name}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-gray-400 uppercase tracking-widest mb-2">{tStrings.category}</label>
+              <select 
+                disabled={isSettlement || type === 'income'}
+                value={category} 
+                onChange={e => setCategory(e.target.value as Category)} 
+                className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl font-bold text-sm outline-none"
+              >
+                {CATEGORIES.filter(c => c !== 'Settlement' && (type === 'income' ? c === 'Income' : c !== 'Income')).map(c => <option key={c} value={c}>{(tStrings.categories as any)[c]}</option>)}
+              </select>
+            </div>
           </div>
 
           {isSettlement && (
@@ -259,10 +196,10 @@ const TransactionForm: React.FC<Props> = ({ accounts, initialData, onAdd, onUpda
                 required
                 value={targetAccountId}
                 onChange={(e) => setTargetAccountId(e.target.value)}
-                className="w-full px-4 py-3 bg-emerald-50 border border-emerald-100 rounded-xl text-sm outline-none font-bold text-emerald-700"
+                className="w-full px-4 py-3 bg-blue-50 border border-blue-100 rounded-xl text-sm outline-none font-bold text-blue-700"
               >
                 <option value="" disabled>Select Credit Card</option>
-                {creditCardAccounts.map(acc => <option key={acc.id} value={acc.id}>{acc.name} (Available: {acc.balance.toLocaleString()})</option>)}
+                {creditCardAccounts.map(acc => <option key={acc.id} value={acc.id}>{acc.name}</option>)}
               </select>
             </div>
           )}
@@ -272,29 +209,87 @@ const TransactionForm: React.FC<Props> = ({ accounts, initialData, onAdd, onUpda
             <input type="time" value={time} onChange={e => setTime(e.target.value)} className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl font-bold text-sm" />
           </div>
 
-          {!isSettlement && (
-            <select value={category} onChange={e => setCategory(e.target.value as Category)} className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl font-bold text-sm">
-              {CATEGORIES.filter(c => c !== 'Settlement').map(c => <option key={c} value={c}>{(tStrings.categories as any)[c]}</option>)}
-            </select>
-          )}
-
-          <div className="flex flex-wrap gap-2">
-            {MOODS.map(m => (
-              <button key={m} type="button" onClick={() => setMood(m)} className={`px-4 py-2 rounded-xl text-xs font-bold transition-all active:scale-95 ${mood === m ? 'bg-blue-600 text-white shadow-lg' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>{(tStrings.moods as any)[m]}</button>
-            ))}
+          {/* Recurring Options */}
+          <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-3">
+                <Repeat className="w-5 h-5 text-slate-500" />
+                <span className="text-sm font-bold text-slate-700">{tStrings.is_recurring}</span>
+              </div>
+              <button 
+                type="button"
+                onClick={() => setIsRecurring(!isRecurring)}
+                className={`w-12 h-6 rounded-full transition-all relative ${isRecurring ? 'bg-blue-600' : 'bg-gray-200'}`}
+              >
+                <div className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-all ${lang === 'ar' ? (isRecurring ? 'right-7' : 'right-1') : (isRecurring ? 'left-7' : 'left-1')}`} />
+              </button>
+            </div>
+            {isRecurring && (
+              <select
+                value={recurringFrequency}
+                onChange={(e) => setRecurringFrequency(e.target.value as RecurringFrequency)}
+                className="w-full px-4 py-2 bg-white border border-slate-200 rounded-xl text-sm font-bold text-slate-700 outline-none"
+              >
+                <option value="weekly">{tStrings.weekly}</option>
+                <option value="monthly">{tStrings.monthly}</option>
+                <option value="yearly">{tStrings.yearly}</option>
+              </select>
+            )}
           </div>
 
-          <input 
-            type="text" 
-            value={description} 
-            onChange={e => setDescription(e.target.value)} 
-            className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl font-bold text-sm outline-none focus:ring-2 focus:ring-blue-500/20" 
-            placeholder={tStrings.description} 
-          />
+          {!isSettlement && (
+            <div className="flex flex-wrap gap-2">
+              {MOODS.map(m => (
+                <button 
+                  key={m} 
+                  type="button" 
+                  onClick={() => setMood(m)} 
+                  className={`px-4 py-2 rounded-xl text-xs font-bold transition-all active:scale-95 ${mood === m ? 'bg-blue-600 text-white shadow-lg' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}
+                >
+                  {(tStrings.moods as any)[m]}
+                </button>
+              ))}
+            </div>
+          )}
+
+          <div className="space-y-4">
+            <input 
+              type="text" 
+              value={description} 
+              onChange={e => setDescription(e.target.value)} 
+              className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl font-bold text-sm outline-none focus:ring-2 focus:ring-blue-500/20" 
+              placeholder={tStrings.description} 
+            />
+
+            <div className="flex items-center gap-3">
+              <input type="file" accept="image/*" className="hidden" ref={fileInputRef} onChange={handleFileUpload} />
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploading}
+                className="flex items-center gap-2 px-4 py-2 border border-slate-200 rounded-xl text-xs font-bold text-slate-500 hover:bg-slate-50 transition-colors"
+              >
+                <Camera size={16} />
+                {tStrings.attachments || (lang === 'ar' ? 'إرفاق صورة' : 'Attach Photo')}
+              </button>
+              {attachments.length > 0 && (
+                <div className="flex gap-2">
+                  {attachments.map((at, i) => (
+                    <div key={i} className="relative w-8 h-8 rounded-lg overflow-hidden border border-slate-200">
+                      <img src={at} className="w-full h-full object-cover" />
+                      <button onClick={() => setAttachments(prev => prev.filter((_, idx) => idx !== i))} className="absolute inset-0 bg-black/40 opacity-0 hover:opacity-100 transition-opacity flex items-center justify-center">
+                        <X size={12} className="text-white" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
 
           <button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white font-black py-4 rounded-2xl shadow-xl shadow-blue-100 uppercase tracking-widest text-xs transition-all active:scale-95 flex items-center justify-center gap-2">
             {isEditing ? <RefreshCw className="w-5 h-5" /> : <PlusCircle className="w-5 h-5" />}
-            {isEditing ? (lang === 'ar' ? 'تحديث' : 'Update') : (lang === 'ar' ? 'إضافة' : 'Add')}
+            {isEditing ? tStrings.update : tStrings.add_transaction}
           </button>
         </form>
       </div>

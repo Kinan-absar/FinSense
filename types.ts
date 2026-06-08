@@ -6,10 +6,14 @@ export type Category =
   | 'Bills & Utilities'
   | 'Health'
   | 'Education'
+  | 'Travel'
+  | 'Income'
   | 'Settlement'
   | 'Other';
 
 export type Mood = 'Happy' | 'Stressed' | 'Tired' | 'Bored' | 'Excited' | 'Neutral';
+export type TransactionType = 'income' | 'expense';
+export type RecurringFrequency = 'weekly' | 'monthly' | 'yearly';
 
 export type Currency = {
   code: string;
@@ -19,7 +23,7 @@ export type Currency = {
 
 export type AccountType = 'Checking' | 'Savings' | 'Credit Card' | 'Investment' | 'Cash';
 
-export type ViewType = 'dashboard' | 'history' | 'budgets' | 'accounts' | 'profile' | 'statement';
+export type ViewType = 'dashboard' | 'history' | 'budgets' | 'accounts' | 'profile' | 'statement' | 'analytics';
 
 export interface UserProfile {
   uid: string;
@@ -51,6 +55,7 @@ export interface Transaction {
   userId: string;
   amount: number;
   category: Category;
+  type: TransactionType;
   date: string; 
   time: string; 
   description: string;
@@ -58,7 +63,17 @@ export interface Transaction {
   accountId: string;
   isSettlement?: boolean;
   targetAccountId?: string | null;
+  isRecurring?: boolean;
+  recurringFrequency?: RecurringFrequency;
   createdAt?: any;
+  attachments?: string[];
+}
+
+export interface BudgetGoalItem {
+  id: string;
+  name: string;
+  cost: number;
+  completed?: boolean;
 }
 
 export interface BudgetGoal {
@@ -68,5 +83,6 @@ export interface BudgetGoal {
   limit: number;
   startDate: string;
   endDate: string;
+  items?: BudgetGoalItem[];
   createdAt?: any;
 }

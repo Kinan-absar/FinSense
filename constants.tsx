@@ -7,8 +7,10 @@ import {
   Lightbulb, 
   HeartPulse, 
   GraduationCap, 
+  Plane,
   MoreHorizontal,
-  ArrowDownRight
+  ArrowDownRight,
+  TrendingUp
 } from 'lucide-react';
 import { Category, Mood, BudgetGoal, Currency } from './types';
 
@@ -20,6 +22,8 @@ export const CATEGORIES: Category[] = [
   'Bills & Utilities',
   'Health',
   'Education',
+  'Travel',
+  'Income',
   'Settlement',
   'Other'
 ];
@@ -48,6 +52,8 @@ export const CATEGORY_ICONS: Record<Category, React.ReactNode> = {
   'Bills & Utilities': <Lightbulb className="w-5 h-5" />,
   'Health': <HeartPulse className="w-5 h-5" />,
   'Education': <GraduationCap className="w-5 h-5" />,
+  'Travel': <Plane className="w-5 h-5" />,
+  'Income': <TrendingUp className="w-5 h-5" />,
   'Settlement': <ArrowDownRight className="w-5 h-5" />,
   'Other': <MoreHorizontal className="w-5 h-5" />
 };
